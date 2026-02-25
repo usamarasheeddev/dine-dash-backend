@@ -1,5 +1,14 @@
 const { ServiceRequest, Company, User, sequelize } = require('../models');
 const bcrypt = require('bcryptjs');
+const nodemailer = require('nodemailer');
+
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER || 'your-email@gmail.com',
+        pass: process.env.EMAIL_PASS || 'your-app-password'
+    }
+});
 
 // Submit a new service request
 exports.submitRequest = async (req, res) => {
@@ -41,6 +50,7 @@ exports.getAllRequests = async (req, res) => {
 // Update request status (Approve/Reject)
 exports.updateRequestStatus = async (req, res) => {
     const transaction = await sequelize.transaction();
+    let emailData = null;
     try {
         const { id } = req.params;
         const { status } = req.body; // 'approved' or 'rejected'
@@ -64,29 +74,23 @@ exports.updateRequestStatus = async (req, res) => {
                 expiryDate: expiry
             }, { transaction });
 
-            // Create Admin User for the company
-            // Password is already hashed in ServiceRequest hooked, but we need to re-hash or copy?
-            // Actually, standard practice: use the password provided.
-            // Wait, ServiceRequest password is hashed in the hook.
-            // So request.password is a hash.
-            // User model also hashes on beforeCreate.
-            // If we pass the hashed password to User.create, it will be hashed AGAIN.
-            // We should disable the hook or handle this.
-            // OR, we can just set the password directly and silence the hook if possible, or just accept double hashing is bad.
-            // Better approach: User the raw password if we had it, but we don't.
-            // Workaround: We will update the User record directly or use a flag.
-            // For now, let's assume we can just pass it and we need to avoid double hashing.
-            // Let's create the user with a temporary password and then update it with the hashed one, avoiding the hook?
-            // Or better, just don't hash in ServiceRequest? No, we should protect it.
-            // Let's rely on the fact that we can pass `hooks: false` to User.create.
+            // Generate a random secure password
+            const generatedPassword = Math.random().toString(36).slice(-8) + Math.floor(Math.random() * 1000);
 
             await User.create({
                 username: 'Admin',
                 email: request.email,
-                password: request.password, // This is already hashed
+                password: generatedPassword, // This will be hashed by the User beforeCreate hook
                 role: 'admin',
                 companyId: company.id
-            }, { transaction, hooks: false }); // Disable hooks to prevent double hashing
+            }, { transaction });
+
+            emailData = {
+                from: process.env.EMAIL_USER || 'no-reply@martpos.com',
+                to: request.email,
+                subject: 'Account Approved - Mart POS',
+                html: `<h3>Welcome to Mart POS</h3><p>Your request for <b>${request.companyName}</b> has been approved!</p><p>You can now log in using these credentials:</p><p><b>Email:</b> ${request.email}<br/><b>Password:</b> ${generatedPassword}</p><p><i>Please change your password immediately after logging in.</i></p>`
+            };
 
             request.status = 'approved';
             await request.save({ transaction });
@@ -96,6 +100,17 @@ exports.updateRequestStatus = async (req, res) => {
         }
 
         await transaction.commit();
+
+        if (emailData) {
+            transporter.sendMail(emailData, function (error, info) {
+                if (error) {
+                    console.error('Error sending email:', error);
+                } else {
+                    console.log('Email sent: ' + info.response);
+                }
+            });
+        }
+
         res.json({ message: `Request ${status} successfully` });
 
     } catch (error) {

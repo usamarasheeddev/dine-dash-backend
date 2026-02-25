@@ -7,5 +7,6 @@ const auth = require('../middleware/authMiddleware');
 router.post('/create', auth('superadmin'), companyController.createCompany);
 router.get('/all', auth('superadmin'), companyController.getAllCompanies);
 router.get('/stats', auth('superadmin'), companyController.getDashboardStats);
+router.put('/:id', auth('superadmin'), companyController.updateCompany);
 
 module.exports = router;

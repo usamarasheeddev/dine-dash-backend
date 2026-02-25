@@ -32,6 +32,14 @@ module.exports = (sequelize, DataTypes) => {
         model: 'Companies',
         key: 'id'
       }
+    },
+    resetPasswordToken: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    resetPasswordExpires: {
+      type: DataTypes.DATE,
+      allowNull: true
     }
   }, {
     hooks: {

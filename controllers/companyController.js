@@ -98,16 +98,54 @@ exports.getDashboardStats = async (req, res) => {
 
         const pendingRequests = await ServiceRequest.count({ where: { status: 'pending' } });
 
+        // Exclude superadmins generally from this count to get true active customer users
+        const totalUsers = await User.count({ where: { role: { [Op.ne]: 'superadmin' } } });
+
         res.json({
             totalCompanies,
             activeCompanies,
             disabledCompanies,
             totalRevenue,
             expiringSoon,
-            pendingRequests
+            pendingRequests,
+            totalUsers
         });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error fetching stats', error: error.message });
+    }
+};
+
+// Update Company (Super Admin only)
+exports.updateCompany = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status, subscriptionPlan } = req.body;
+
+        const company = await Company.findByPk(id);
+        if (!company) {
+            return res.status(404).json({ message: 'Company not found' });
+        }
+
+        const updates = {};
+        if (status) updates.status = status;
+
+        if (subscriptionPlan) {
+            const priceMap = { 'basic': 50, 'premium': 150, 'enterprise': 500 };
+            updates.subscriptionPlan = subscriptionPlan;
+            updates.subscriptionPrice = priceMap[subscriptionPlan] || priceMap['basic'];
+
+            // Adjust expiry if plan upgrades - simple logic to reset 30 days for now
+            const expiry = new Date();
+            expiry.setDate(expiry.getDate() + 30);
+            updates.expiryDate = expiry;
+        }
+
+        await company.update(updates);
+
+        res.json({ message: 'Company updated successfully', company });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error updating company', error: error.message });
     }
 };
