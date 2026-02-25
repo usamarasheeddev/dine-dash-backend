@@ -5,7 +5,14 @@ exports.getOrders = async (req, res) => {
     try {
         const orders = await Order.findAll({
             where: { companyId: req.user.companyId },
-            include: ['items', 'customer', 'waiter', 'table', 'branch']
+            include: [
+                {
+                    association: 'items',
+                    include: ['product'] // Include Product details
+                },
+                'customer', 'waiter', 'table', 'branch'
+            ],
+            order: [['createdAt', 'DESC']]
         });
         res.json(orders);
     } catch (error) {
@@ -89,6 +96,30 @@ exports.updateOrderStatus = async (req, res) => {
         }
 
         order.status = status;
+        await order.save();
+        res.json(order);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// Process Payment / Complete Order
+exports.payOrder = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { paymentMethod, discount, finalTotal, status } = req.body;
+        const order = await Order.findOne({ where: { id, companyId: req.user.companyId } });
+
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found' });
+        }
+
+        order.paymentMethod = paymentMethod;
+        if (discount !== undefined) order.discount = discount;
+        if (finalTotal !== undefined) order.finalTotal = finalTotal;
+        order.status = status || 'completed'; // usually paid means completed or preparing
+
         await order.save();
         res.json(order);
     } catch (error) {

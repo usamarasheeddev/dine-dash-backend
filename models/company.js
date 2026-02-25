@@ -32,6 +32,31 @@ module.exports = (sequelize, DataTypes) => {
     subscriptionPrice: {
       type: DataTypes.DECIMAL(10, 2),
       defaultValue: 0.00
+    },
+    address: DataTypes.STRING,
+    phone: DataTypes.STRING,
+    phone2: DataTypes.STRING,
+    currency: {
+      type: DataTypes.STRING,
+      defaultValue: 'USD'
+    },
+    timezone: {
+      type: DataTypes.STRING,
+      defaultValue: 'America/New_York'
+    },
+    taxRate: {
+      type: DataTypes.DECIMAL(5, 2),
+      defaultValue: 10.00
+    },
+    receiptHeader: DataTypes.TEXT,
+    receiptFooter: DataTypes.TEXT,
+    orderTypes: {
+      type: DataTypes.JSON,
+      defaultValue: { dineIn: true, takeaway: true, delivery: true }
+    },
+    kitchenEnabled: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
     }
   }, {
     sequelize,

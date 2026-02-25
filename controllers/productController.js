@@ -47,6 +47,23 @@ exports.updateCategory = async (req, res) => {
     }
 };
 
+exports.deleteCategory = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const category = await ProductCategory.findOne({ where: { id, companyId: req.user.companyId } });
+
+        if (!category) {
+            return res.status(404).json({ message: 'Category not found' });
+        }
+
+        await category.destroy();
+        res.json({ message: 'Category deleted successfully' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error deleting category' });
+    }
+};
+
 // --- Products ---
 exports.getProducts = async (req, res) => {
     try {

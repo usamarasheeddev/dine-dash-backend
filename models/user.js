@@ -40,7 +40,9 @@ module.exports = (sequelize, DataTypes) => {
     resetPasswordExpires: {
       type: DataTypes.DATE,
       allowNull: true
-    }
+    },
+    fullName: DataTypes.STRING,
+    phone: DataTypes.STRING
   }, {
     hooks: {
       beforeCreate: async (user) => {

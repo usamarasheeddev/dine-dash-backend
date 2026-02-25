@@ -34,6 +34,8 @@ app.listen(PORT, async () => {
     try {
         await sequelize.authenticate();
         console.log('Database connected!');
+        await sequelize.sync({ alter: true });
+        console.log('Database schemas synced!');
     } catch (err) {
         console.error('Database connection failed:', err);
     }

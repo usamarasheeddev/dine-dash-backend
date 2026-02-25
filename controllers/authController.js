@@ -86,18 +86,25 @@ exports.updateProfile = async (req, res) => {
         if (!user) return res.status(404).json({ message: 'User not found' });
 
         if (newPassword) {
+            // Note: In an integrated app, checking currentPassword makes sense, 
+            // but if we are just forcing a password update we can bypass it if needed.
+            // Sticking with original check for security.
             if (!currentPassword) return res.status(400).json({ message: 'Current password required' });
             const isMatch = await bcrypt.compare(currentPassword, user.password);
             if (!isMatch) return res.status(400).json({ message: 'Incorrect current password' });
 
-            user.password = await bcrypt.hash(newPassword, 10);
+            // Note: The beforeUpdate hook hashes the password if we pass it in plain text
+            // Don't hash it twice! The hook checks if user.changed('password')
+            user.password = newPassword;
         }
 
         if (username) user.username = username;
+        if (req.body.fullName) user.fullName = req.body.fullName;
+        if (req.body.phone) user.phone = req.body.phone;
         if (email) user.email = email;
 
         await user.save();
-        res.json({ message: 'Profile updated successfully', user: { id: user.id, username: user.username, email: user.email } });
+        res.json({ message: 'Profile updated successfully', user: { id: user.id, username: user.username, fullName: user.fullName, phone: user.phone, email: user.email } });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error updating profile' });
@@ -117,6 +124,8 @@ exports.getUser = async (req, res) => {
                 user_details: {
                     id: user.id,
                     username: user.username,
+                    fullName: user.fullName || '',
+                    phone: user.phone || '',
                     email: user.email,
                     user_role: user.role,
                     companyId: user.companyId

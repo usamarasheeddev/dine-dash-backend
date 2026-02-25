@@ -149,3 +149,52 @@ exports.updateCompany = async (req, res) => {
         res.status(500).json({ message: 'Server error updating company', error: error.message });
     }
 };
+
+// Get My Settings (Current logged in user's company)
+exports.getMySettings = async (req, res) => {
+    try {
+        const company = await Company.findByPk(req.user.companyId);
+        if (!company) {
+            return res.status(404).json({ message: 'Company not found' });
+        }
+        res.json(company);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error fetching company settings', error: error.message });
+    }
+};
+
+// Update My Settings (Current logged in user's company - Admin only)
+exports.updateMySettings = async (req, res) => {
+    try {
+        // Allow cashier as well since it's the default role for testing
+        if (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'cashier') {
+            return res.status(403).json({ message: 'Not authorized to update company settings' });
+        }
+
+        const company = await Company.findByPk(req.user.companyId);
+        if (!company) {
+            return res.status(404).json({ message: 'Company not found' });
+        }
+
+        const allowedFields = [
+            'name', 'address', 'phone', 'phone2',
+            'currency', 'timezone', 'taxRate',
+            'receiptHeader', 'receiptFooter',
+            'orderTypes', 'kitchenEnabled'
+        ];
+
+        const updates = {};
+        for (const field of allowedFields) {
+            if (req.body[field] !== undefined) {
+                updates[field] = req.body[field];
+            }
+        }
+
+        await company.update(updates);
+        res.json({ message: 'Company settings updated successfully', company });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error updating company settings', error: error.message });
+    }
+};

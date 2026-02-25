@@ -7,6 +7,7 @@ const auth = require('../middleware/authMiddleware');
 router.get('/categories', auth(), productController.getCategories);
 router.post('/categories', auth(), productController.addCategory);
 router.put('/categories/:id', auth(), productController.updateCategory);
+router.delete('/categories/:id', auth(), productController.deleteCategory);
 
 // Products
 router.get('/', auth(), productController.getProducts);
