@@ -6,7 +6,12 @@ module.exports = (roles = []) => {
     }
 
     return (req, res, next) => {
-        const token = req.header('x-auth-token');
+        let token = req.header('x-auth-token');
+        const authHeader = req.header('Authorization');
+
+        if (!token && authHeader && authHeader.startsWith('Bearer ')) {
+            token = authHeader.split(' ')[1];
+        }
 
         if (!token) {
             return res.status(401).json({ message: 'No token, authorization denied' });

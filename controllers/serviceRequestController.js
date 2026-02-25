@@ -51,11 +51,17 @@ exports.updateRequestStatus = async (req, res) => {
         }
 
         if (status === 'approved' && request.status !== 'approved') {
-            // Create Company
+            const priceMap = { 'basic': 50, 'premium': 150, 'enterprise': 500 };
+            const expiry = new Date();
+            expiry.setDate(expiry.getDate() + 30);
+
             const company = await Company.create({
                 name: request.companyName,
                 email: request.email,
-                status: 'active'
+                status: 'active',
+                subscriptionPlan: 'basic', // Default plan for requests
+                subscriptionPrice: priceMap['basic'],
+                expiryDate: expiry
             }, { transaction });
 
             // Create Admin User for the company

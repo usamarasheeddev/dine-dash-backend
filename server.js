@@ -9,11 +9,14 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:3000'],
+    credentials: true
+}));
 app.use(express.json());
 
 // Routes
-app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api', require('./routes/authRoutes'));
 app.use('/api/service-requests', require('./routes/serviceRequestRoutes'));
 app.use('/api/branches', require('./routes/branchRoutes'));
 app.use('/api/customers', require('./routes/customerRoutes'));
@@ -22,6 +25,8 @@ app.use('/api/tables', require('./routes/tableRoutes'));
 app.use('/api/waiters', require('./routes/waiterRoutes'));
 app.use('/api/orders', require('./routes/orderRoutes'));
 app.use('/api/ledgers', require('./routes/ledgerRoutes'));
+app.use('/api/companies', require('./routes/companyRoutes'));
+
 
 // Database Connection and Server Start
 app.listen(PORT, async () => {
