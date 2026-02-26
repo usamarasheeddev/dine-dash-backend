@@ -1,4 +1,4 @@
-const { Order, OrderItem, Product, Customer, InventoryItem, InventoryLedger, sequelize } = require('../models');
+const { Order, OrderItem, Product, Customer, InventoryItem, InventoryLedger, Table, sequelize } = require('../models');
 
 // Get all orders
 exports.getOrders = async (req, res) => {
@@ -94,6 +94,14 @@ exports.createOrder = async (req, res) => {
         // For now, assuming standard logic. If there's a customerId, maybe update their balance?
         // Leaving that for Ledger/Voucher logic or explicit "On Account" payment method.
 
+        // Update Table status to occupied if dine-in
+        if (orderType === 'dine-in' && tableId) {
+            await Table.update(
+                { status: 'occupied' },
+                { where: { id: tableId, companyId: req.user.companyId }, transaction }
+            );
+        }
+
         await transaction.commit();
 
         // Fetch the created order with items
@@ -122,6 +130,14 @@ exports.updateOrderStatus = async (req, res) => {
 
         order.status = status;
         await order.save();
+
+        if ((status === 'completed' || status === 'cancelled') && order.tableId) {
+            await Table.update(
+                { status: 'available' },
+                { where: { id: order.tableId, companyId: req.user.companyId } }
+            );
+        }
+
         res.json(order);
     } catch (error) {
         console.error(error);
@@ -144,8 +160,15 @@ exports.payOrder = async (req, res) => {
         if (discount !== undefined) order.discount = discount;
         if (finalTotal !== undefined) order.finalTotal = finalTotal;
         order.status = status || 'completed'; // usually paid means completed or preparing
-
         await order.save();
+
+        if ((order.status === 'completed' || order.status === 'cancelled') && order.tableId) {
+            await Table.update(
+                { status: 'available' },
+                { where: { id: order.tableId, companyId: req.user.companyId } }
+            );
+        }
+
         res.json(order);
     } catch (error) {
         console.error(error);
