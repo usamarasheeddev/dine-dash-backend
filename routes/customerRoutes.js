@@ -7,5 +7,6 @@ router.get('/', auth(), customerController.getCustomers);
 router.post('/', auth(), customerController.addCustomer);
 router.put('/:id', auth(), customerController.updateCustomer);
 router.delete('/:id', auth(), customerController.deleteCustomer);
+router.post('/:id/ledger', auth(), customerController.addLedgerEntry);
 
 module.exports = router;
