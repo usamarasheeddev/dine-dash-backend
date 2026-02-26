@@ -1,4 +1,4 @@
-const { Order, OrderItem, Product, Customer, sequelize } = require('../models');
+const { Order, OrderItem, Product, Customer, InventoryItem, InventoryLedger, sequelize } = require('../models');
 
 // Get all orders
 exports.getOrders = async (req, res) => {
@@ -56,11 +56,36 @@ exports.createOrder = async (req, res) => {
                     total: item.total
                 }, { transaction });
 
-                // Update product stock
+                // Update product stock (legacy basic tracking)
                 const product = await Product.findByPk(item.productId, { transaction });
                 if (product) {
                     product.stock_quantity -= item.quantity;
                     await product.save({ transaction });
+
+                    // Auto-deduct inventory: look up InventoryItem linked to this Product
+                    const invItem = await InventoryItem.findOne({
+                        where: { productId: product.id, companyId: req.user.companyId },
+                        transaction
+                    });
+                    if (invItem) {
+                        const deductAmount = item.quantity;
+                        const previousStock = parseFloat(invItem.quantity || 0);
+                        const newStock = previousStock - deductAmount;
+
+                        invItem.quantity = newStock;
+                        await invItem.save({ transaction });
+
+                        await InventoryLedger.create({
+                            inventoryItemId: invItem.id,
+                            companyId: req.user.companyId,
+                            userId: req.user.id,
+                            type: 'deduction',
+                            quantityChange: -deductAmount,
+                            previousStock,
+                            newStock,
+                            note: `Auto-deducted for POS Order (Product: ${product.name})`
+                        }, { transaction });
+                    }
                 }
             }
         }

@@ -13,6 +13,7 @@ module.exports = (sequelize, DataTypes) => {
       // define association here
       Product.belongsTo(models.Company, { foreignKey: 'companyId', as: 'company' });
       Product.belongsTo(models.ProductCategory, { foreignKey: 'categoryId', as: 'category' });
+      Product.belongsTo(models.InventoryItem, { foreignKey: 'inventoryItemId', as: 'linkedInventory' });
       Product.hasMany(models.OrderItem, { foreignKey: 'productId', as: 'orderItems' });
     }
   }
@@ -46,6 +47,14 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       references: {
         model: 'Companies',
+        key: 'id'
+      }
+    },
+    inventoryItemId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'InventoryItems',
         key: 'id'
       }
     }

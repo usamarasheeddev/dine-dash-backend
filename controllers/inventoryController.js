@@ -1,10 +1,11 @@
-const { InventoryItem, InventoryLedger, User } = require('../models');
+const { InventoryItem, InventoryLedger, User, Product } = require('../models');
 
 // Get all inventory items
 exports.getItems = async (req, res) => {
     try {
         const items = await InventoryItem.findAll({
             where: { companyId: req.user.companyId },
+            include: [{ model: Product, as: 'linkedProduct', attributes: ['id', 'name', 'price'] }],
             order: [['createdAt', 'DESC']]
         });
         res.json(items);
@@ -17,7 +18,7 @@ exports.getItems = async (req, res) => {
 // Add a new inventory item
 exports.addItem = async (req, res) => {
     try {
-        const { name, category, unit, quantity, minStock, costPerUnit, supplier } = req.body;
+        const { name, category, unit, quantity, minStock, costPerUnit, supplier, productId } = req.body;
 
         const item = await InventoryItem.create({
             companyId: req.user.companyId,
@@ -27,7 +28,8 @@ exports.addItem = async (req, res) => {
             quantity: quantity || 0,
             minStock: minStock || 0,
             costPerUnit: costPerUnit || 0,
-            supplier: supplier || ''
+            supplier: supplier || '',
+            productId: productId || null
         });
 
         res.status(201).json(item);
@@ -41,7 +43,7 @@ exports.addItem = async (req, res) => {
 exports.updateItem = async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, category, unit, quantity, minStock, costPerUnit, supplier } = req.body;
+        const { name, category, unit, quantity, minStock, costPerUnit, supplier, productId } = req.body;
 
         const item = await InventoryItem.findOne({ where: { id, companyId: req.user.companyId } });
         if (!item) {
@@ -55,6 +57,7 @@ exports.updateItem = async (req, res) => {
         item.minStock = minStock !== undefined ? minStock : item.minStock;
         item.costPerUnit = costPerUnit !== undefined ? costPerUnit : item.costPerUnit;
         item.supplier = supplier || '';
+        item.productId = productId !== undefined ? (productId || null) : item.productId;
 
         await item.save();
         res.json(item);

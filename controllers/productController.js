@@ -69,7 +69,10 @@ exports.getProducts = async (req, res) => {
     try {
         const products = await Product.findAll({
             where: { companyId: req.user.companyId },
-            include: [{ model: ProductCategory, as: 'category' }]
+            include: [
+                { model: ProductCategory, as: 'category' },
+                { model: require('../models').InventoryItem, as: 'linkedInventory', attributes: ['id', 'name', 'unit', 'quantity'] }
+            ]
         });
         res.json(products);
     } catch (error) {
@@ -87,6 +90,7 @@ exports.addProduct = async (req, res) => {
             cost,
             stock_quantity: stock_quantity || 0,
             categoryId,
+            inventoryItemId: req.body.inventoryItemId || null,
             image,
             isFavourite: isFavourite || false,
             companyId: req.user.companyId
@@ -107,7 +111,10 @@ exports.updateProduct = async (req, res) => {
             return res.status(404).json({ message: 'Product not found' });
         }
 
-        await product.update(req.body);
+        await product.update({
+            ...req.body,
+            inventoryItemId: req.body.inventoryItemId !== undefined ? req.body.inventoryItemId : product.inventoryItemId
+        });
         res.json(product);
     } catch (error) {
         console.error(error);

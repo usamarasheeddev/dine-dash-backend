@@ -11,6 +11,7 @@ module.exports = (sequelize, DataTypes) => {
      */
     static associate(models) {
       InventoryItem.belongsTo(models.Company, { foreignKey: 'companyId', as: 'company' });
+      InventoryItem.belongsTo(models.Product, { foreignKey: 'productId', as: 'linkedProduct' });
       InventoryItem.hasMany(models.InventoryLedger, { foreignKey: 'inventoryItemId', as: 'ledger' });
     }
   }
@@ -18,6 +19,14 @@ module.exports = (sequelize, DataTypes) => {
     companyId: {
       type: DataTypes.INTEGER,
       allowNull: false
+    },
+    productId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'Products',
+        key: 'id'
+      }
     },
     name: {
       type: DataTypes.STRING,
