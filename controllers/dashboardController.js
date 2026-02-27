@@ -1,0 +1,281 @@
+const { Order, OrderItem, Product, InventoryItem, sequelize } = require('../models');
+const { Op } = require('sequelize');
+
+exports.getDashboardStats = async (req, res) => {
+    try {
+        const companyId = req.user.companyId;
+        const { timeframe = 'daily' } = req.query; // daily, weekly, monthly
+
+        // 1. Order Stats (Revenue, Counts)
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+
+        // Fetch aggregate for Today
+        const todayOrders = await Order.findAll({
+            attributes: [
+                [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+                [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
+            ],
+            where: {
+                companyId,
+                status: 'completed',
+                createdAt: {
+                    [Op.between]: [todayStart, todayEnd]
+                }
+            },
+            raw: true
+        });
+
+        const todayRevenue = Number(todayOrders[0].revenue || 0);
+        const todayOrdersCount = await Order.count({
+            where: {
+                companyId,
+                createdAt: {
+                    [Op.between]: [todayStart, todayEnd]
+                }
+            }
+        });
+
+        // Fetch aggregate for All Time
+        const allTimeStats = await Order.findAll({
+            attributes: [
+                [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+                [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
+            ],
+            where: {
+                companyId,
+                status: 'completed'
+            },
+            raw: true
+        });
+
+        const totalOrdersCount = await Order.count({ where: { companyId } });
+        const totalCompletedCount = Number(allTimeStats[0].count || 0);
+        const totalRevenue = Number(allTimeStats[0].revenue || 0);
+        const avgOrderValue = totalCompletedCount > 0 ? totalRevenue / totalCompletedCount : 0;
+
+        // 2. Orders by Status
+        const statusGroups = await Order.findAll({
+            attributes: ['status', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
+            where: { companyId },
+            group: ['status'],
+            raw: true
+        });
+
+        const ordersByStatus = { new: 0, preparing: 0, pending: 0, completed: 0, cancelled: 0 };
+        statusGroups.forEach(g => {
+            ordersByStatus[g.status] = Number(g.count);
+        });
+
+        // 3. Inventory Stats
+        const lowStockItems = await InventoryItem.findAll({
+            where: {
+                companyId,
+                quantity: {
+                    [Op.gt]: 0,
+                    [Op.lte]: sequelize.col('minStock')
+                }
+            }
+        });
+
+        const outOfStockItems = await InventoryItem.findAll({
+            where: {
+                companyId,
+                quantity: {
+                    [Op.lte]: 0
+                }
+            }
+        });
+
+        const inventorySummary = await InventoryItem.findAll({
+            attributes: [
+                [sequelize.literal('SUM("quantity" * "costPerUnit")'), 'totalValue'],
+                [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+            ],
+            where: { companyId },
+            raw: true
+        });
+
+        const totalStockValue = Number(inventorySummary[0].totalValue || 0);
+        const totalInventoryItems = Number(inventorySummary[0].count || 0);
+
+        // 4. Top Selling Products
+        // Using OrderItem joined with Product, filtered by completed orders
+        const topProductsData = await OrderItem.findAll({
+            attributes: [
+                [sequelize.fn('SUM', sequelize.col('OrderItem.quantity')), 'qty'],
+                [sequelize.fn('SUM', sequelize.col('OrderItem.total')), 'revenue']
+            ],
+            include: [
+                {
+                    model: Order,
+                    as: 'order',
+                    attributes: [],
+                    where: { companyId, status: 'completed' }
+                },
+                {
+                    model: Product,
+                    as: 'product',
+                    attributes: ['name']
+                }
+            ],
+            group: ['product.id', 'product.name'],
+            order: [[sequelize.literal('revenue'), 'DESC']],
+            limit: 5,
+            raw: true
+        });
+
+        const topProducts = topProductsData.map(p => ({
+            name: p['product.name'],
+            qty: Number(p.qty),
+            revenue: Number(p.revenue)
+        }));
+
+        // 5. Revenue Graph Data (based on timeframe)
+        let graphData = [];
+        const dialect = sequelize.getDialect(); // Should be postgres
+
+        if (timeframe === 'daily') {
+            // Last 24 hours, grouped by hour
+            const last24Hrs = new Date(new Date().getTime() - 24 * 60 * 60 * 1000);
+
+            // Note: PostgreSQL DATE_TRUNC needs careful handling with timezone if required, 
+            // but we'll group by just 'hour' for simplicity
+            const graphQuery = await Order.findAll({
+                attributes: [
+                    [sequelize.fn('date_trunc', 'hour', sequelize.col('createdAt')), 'time'],
+                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
+                ],
+                where: {
+                    companyId,
+                    status: 'completed',
+                    createdAt: { [Op.gte]: last24Hrs }
+                },
+                group: [sequelize.fn('date_trunc', 'hour', sequelize.col('createdAt'))],
+                order: [[sequelize.fn('date_trunc', 'hour', sequelize.col('createdAt')), 'ASC']],
+                raw: true
+            });
+
+            // Fill missing hours
+            const hoursMap = {};
+            graphQuery.forEach(g => {
+                const dateKey = new Date(g.time);
+                // format as e.g., 2 PM
+                const label = dateKey.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+                hoursMap[label] = Number(g.revenue);
+            });
+
+            for (let i = 23; i >= 0; i--) {
+                const d = new Date();
+                d.setHours(d.getHours() - i);
+                const label = d.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+                if (!graphData.find(x => x.day === label)) {
+                    graphData.push({ day: label, revenue: hoursMap[label] || 0 });
+                }
+            }
+
+        } else if (timeframe === 'weekly') {
+            // Last 7 days
+            const last7Days = new Date(new Date().setDate(new Date().getDate() - 7));
+
+            const graphQuery = await Order.findAll({
+                attributes: [
+                    [sequelize.fn('date_trunc', 'day', sequelize.col('createdAt')), 'time'],
+                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
+                ],
+                where: {
+                    companyId,
+                    status: 'completed',
+                    createdAt: { [Op.gte]: last7Days }
+                },
+                group: [sequelize.fn('date_trunc', 'day', sequelize.col('createdAt'))],
+                order: [[sequelize.fn('date_trunc', 'day', sequelize.col('createdAt')), 'ASC']],
+                raw: true
+            });
+
+            const daysMap = {};
+            graphQuery.forEach(g => {
+                const dateKey = new Date(g.time);
+                const label = dateKey.toLocaleDateString("en", { weekday: "short" });
+                daysMap[label] = Number(g.revenue);
+            });
+
+            for (let i = 6; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                const label = d.toLocaleDateString("en", { weekday: "short" });
+                graphData.push({ day: label, revenue: daysMap[label] || 0 });
+            }
+
+        } else if (timeframe === 'monthly') {
+            // Last 30 days
+            const last30Days = new Date(new Date().setDate(new Date().getDate() - 30));
+
+            const graphQuery = await Order.findAll({
+                attributes: [
+                    [sequelize.fn('date_trunc', 'day', sequelize.col('createdAt')), 'time'],
+                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
+                ],
+                where: {
+                    companyId,
+                    status: 'completed',
+                    createdAt: { [Op.gte]: last30Days }
+                },
+                group: [sequelize.fn('date_trunc', 'day', sequelize.col('createdAt'))],
+                order: [[sequelize.fn('date_trunc', 'day', sequelize.col('createdAt')), 'ASC']],
+                raw: true
+            });
+
+            const daysMap = {};
+            graphQuery.forEach(g => {
+                const dateKey = new Date(g.time);
+                // e.g., "Oct 12"
+                const label = dateKey.toLocaleDateString("en", { month: "short", day: "numeric" });
+                daysMap[label] = Number(g.revenue);
+            });
+
+            for (let i = 29; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                const label = d.toLocaleDateString("en", { month: "short", day: "numeric" });
+                graphData.push({ day: label, revenue: daysMap[label] || 0 });
+            }
+        }
+
+        // 6. Recent Orders
+        const recentOrders = await Order.findAll({
+            where: { companyId },
+            include: [{ association: 'customer', attributes: ['name'] }],
+            order: [['createdAt', 'DESC']],
+            limit: 8
+        });
+
+        res.json({
+            stats: {
+                todayRevenue,
+                todayOrdersCount,
+                totalRevenue,
+                totalOrdersCount,
+                totalCompletedCount,
+                avgOrderValue
+            },
+            ordersByStatus,
+            inventory: {
+                lowStockItems,
+                outOfStockItems,
+                totalStockValue,
+                totalInventoryItems
+            },
+            topProducts,
+            graphData,
+            recentOrders
+        });
+
+    } catch (error) {
+        console.error("Dashboard Stats Error:", error);
+        res.status(500).json({ message: 'Server error retrieving dashboard stats' });
+    }
+};

@@ -1,5 +1,120 @@
 const { Order, OrderItem, Product, Customer, InventoryItem, InventoryLedger, Table, sequelize } = require('../models');
+const { Op } = require('sequelize');
+const { startOfDay, endOfDay } = require('date-fns');
 
+// ... (existing code, add at bottom)
+
+// Get Reports Data (Aggregates)
+exports.getReport = async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+        const companyId = req.user.companyId;
+
+        if (!startDate || !endDate) {
+            return res.status(400).json({ message: 'startDate and endDate are required' });
+        }
+
+        const start = startOfDay(new Date(startDate));
+        const end = endOfDay(new Date(endDate));
+
+        const dateFilter = {
+            companyId,
+            createdAt: {
+                [Op.between]: [start, end]
+            }
+        };
+
+        // 1. Fetch relevant orders
+        const orders = await Order.findAll({
+            where: dateFilter,
+            include: [
+                {
+                    association: 'items',
+                    include: ['product']
+                },
+                'customer'
+            ]
+        });
+
+        // Compute base aggregations (similar to frontend `Reports.tsx`)
+        const completedOrders = orders.filter(o => o.status === 'completed');
+        const filtered = orders; // All orders in range
+
+        const totalRevenue = completedOrders.reduce((s, o) => s + parseFloat(o.finalTotal || o.total || 0), 0);
+        const totalTax = completedOrders.reduce((s, o) => s + parseFloat(o.tax || 0), 0);
+        const totalDiscount = completedOrders.reduce((s, o) => s + parseFloat(o.discount || 0), 0);
+        const avgOrderValue = completedOrders.length ? totalRevenue / completedOrders.length : 0;
+
+        // 2. Product Stats
+        const productMap = {};
+        completedOrders.forEach(o => {
+            o.items.forEach(i => {
+                const name = i.product ? i.product.name : 'Unknown Product';
+                if (!productMap[name]) productMap[name] = { name, qty: 0, revenue: 0 };
+                productMap[name].qty += parseFloat(i.quantity);
+                productMap[name].revenue += parseFloat(i.total);
+            });
+        });
+        const productStats = Object.values(productMap).sort((a, b) => b.revenue - a.revenue);
+
+        // 3. Category (OrderType) Stats
+        const categoryMap = {};
+        completedOrders.forEach(o => {
+            const type = o.orderType || 'unknown';
+            if (!categoryMap[type]) categoryMap[type] = { name: type, orders: 0, revenue: 0 };
+            categoryMap[type].orders++;
+            categoryMap[type].revenue += parseFloat(o.finalTotal || o.total || 0);
+        });
+        const categoryStats = Object.values(categoryMap).sort((a, b) => b.revenue - a.revenue);
+
+        // 4. Customer Stats
+        const customerMap = {};
+        completedOrders.forEach(o => {
+            const name = o.customer ? o.customer.name : "Walk-in";
+            if (!customerMap[name]) customerMap[name] = { name, orders: 0, spent: 0 };
+            customerMap[name].orders++;
+            customerMap[name].spent += parseFloat(o.finalTotal || o.total || 0);
+        });
+        const customerStats = Object.values(customerMap).sort((a, b) => b.spent - a.spent);
+
+        // 5. Ledger entries (credit orders)
+        const ledgerEntries = filtered
+            .filter(o => o.paymentMethod === 'credit' || o.payment === 'credit')
+            .map(o => ({
+                id: o.id,
+                customer: o.customer ? o.customer.name : "Walk-in",
+                amount: parseFloat(o.finalTotal || o.total || 0),
+                date: o.createdAt,
+                status: o.status,
+            }))
+            .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        const totalCredit = ledgerEntries.reduce((s, e) => s + e.amount, 0);
+
+        res.json({
+            summary: {
+                totalRevenue,
+                totalOrders: filtered.length,
+                completedOrders: completedOrders.length,
+                avgOrderValue,
+                totalTax,
+                totalDiscount
+            },
+            orders: filtered,
+            productStats,
+            categoryStats,
+            customerStats,
+            ledger: {
+                entries: ledgerEntries,
+                totalCredit
+            }
+        });
+
+    } catch (error) {
+        console.error("Reports API Error:", error);
+        res.status(500).json({ message: 'Server error retrieving reports' });
+    }
+};
 // Get all orders
 exports.getOrders = async (req, res) => {
     try {
