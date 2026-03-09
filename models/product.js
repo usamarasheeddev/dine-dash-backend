@@ -57,6 +57,18 @@ module.exports = (sequelize, DataTypes) => {
         model: 'InventoryItems',
         key: 'id'
       }
+    },
+    variations: {
+      type: DataTypes.JSONB,
+      defaultValue: []
+    },
+    addons: {
+      type: DataTypes.JSONB,
+      defaultValue: []
+    },
+    active: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true
     }
   }, {
     sequelize,

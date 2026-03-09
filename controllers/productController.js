@@ -83,7 +83,7 @@ exports.getProducts = async (req, res) => {
 
 exports.addProduct = async (req, res) => {
     try {
-        const { name, price, cost, stock_quantity, categoryId, image, isFavourite } = req.body;
+        const { name, price, cost, stock_quantity, categoryId, image, isFavourite, variations, addons, active } = req.body;
         const newProduct = await Product.create({
             name,
             price,
@@ -93,6 +93,9 @@ exports.addProduct = async (req, res) => {
             inventoryItemId: req.body.inventoryItemId || null,
             image,
             isFavourite: isFavourite || false,
+            variations: variations || [],
+            addons: addons || [],
+            active: active !== undefined ? active : true,
             companyId: req.user.companyId
         });
         res.status(201).json(newProduct);
