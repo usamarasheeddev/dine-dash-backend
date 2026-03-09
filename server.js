@@ -28,6 +28,7 @@ app.use('/api/ledgers', require('./routes/ledgerRoutes'));
 app.use('/api/companies', require('./routes/companyRoutes'));
 app.use('/api/inventory', require('./routes/inventoryRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
+app.use('/api/users', require('./routes/userRoutes'));
 
 
 // Database Connection and Server Start
