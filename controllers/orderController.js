@@ -7,7 +7,7 @@ const { startOfDay, endOfDay } = require('date-fns');
 // Get Reports Data (Aggregates)
 exports.getReport = async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, search, status, orderType } = req.query;
         const companyId = req.user.companyId;
 
         if (!startDate || !endDate) {
@@ -24,16 +24,33 @@ exports.getReport = async (req, res) => {
             }
         };
 
+        // Add additional filters
+        if (status) dateFilter.status = status;
+        if (orderType) dateFilter.orderType = orderType;
+
+        const include = [
+            {
+                association: 'items',
+                include: ['product']
+            },
+            {
+                model: Customer,
+                as: 'customer'
+            }
+        ];
+
+        // Search logic
+        if (search) {
+            dateFilter[Op.or] = [
+                { id: { [Op.like]: `%${search}%` } },
+                { '$customer.name$': { [Op.like]: `%${search}%` } }
+            ];
+        }
+
         // 1. Fetch relevant orders
         const orders = await Order.findAll({
             where: dateFilter,
-            include: [
-                {
-                    association: 'items',
-                    include: ['product']
-                },
-                'customer'
-            ]
+            include
         });
 
         // Compute base aggregations (similar to frontend `Reports.tsx`)
@@ -50,12 +67,35 @@ exports.getReport = async (req, res) => {
         completedOrders.forEach(o => {
             o.items.forEach(i => {
                 const name = i.product ? i.product.name : 'Unknown Product';
-                if (!productMap[name]) productMap[name] = { name, qty: 0, revenue: 0 };
+                if (!productMap[name]) productMap[name] = { name, qty: 0, revenue: 0, variations: {}, addons: {} };
                 productMap[name].qty += parseFloat(i.quantity);
                 productMap[name].revenue += parseFloat(i.total);
+
+                // Aggregate variations
+                if (i.variations && Array.isArray(i.variations)) {
+                    i.variations.forEach(v => {
+                        const vName = v.name || v.label;
+                        if (!productMap[name].variations[vName]) productMap[name].variations[vName] = { name: vName, qty: 0 };
+                        productMap[name].variations[vName].qty += parseFloat(i.quantity);
+                    });
+                }
+
+                // Aggregate addons
+                if (i.addons && Array.isArray(i.addons)) {
+                    i.addons.forEach(a => {
+                        const aName = a.name || a.label;
+                        if (!productMap[name].addons[aName]) productMap[name].addons[aName] = { name: aName, qty: 0 };
+                        productMap[name].addons[aName].qty += parseFloat(i.quantity);
+                    });
+                }
             });
         });
-        const productStats = Object.values(productMap).sort((a, b) => b.revenue - a.revenue);
+
+        const productStats = Object.values(productMap).map(p => ({
+            ...p,
+            variations: Object.values(p.variations),
+            addons: Object.values(p.addons)
+        })).sort((a, b) => b.revenue - a.revenue);
 
         // 3. Category (OrderType) Stats
         const categoryMap = {};
@@ -77,8 +117,12 @@ exports.getReport = async (req, res) => {
         });
         const customerStats = Object.values(customerMap).sort((a, b) => b.spent - a.spent);
 
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
         // 5. Ledger entries (credit orders)
-        const ledgerEntries = filtered
+        const allLedgerEntries = filtered
             .filter(o => o.paymentMethod === 'credit' || o.payment === 'credit')
             .map(o => ({
                 id: o.id,
@@ -89,7 +133,11 @@ exports.getReport = async (req, res) => {
             }))
             .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-        const totalCredit = ledgerEntries.reduce((s, e) => s + e.amount, 0);
+        const totalCredit = allLedgerEntries.reduce((s, e) => s + e.amount, 0);
+
+        // Slice lists for pagination
+        const paginatedOrders = filtered.slice(skip, skip + limit);
+        const paginatedLedger = allLedgerEntries.slice(skip, skip + limit);
 
         res.json({
             summary: {
@@ -100,13 +148,20 @@ exports.getReport = async (req, res) => {
                 totalTax,
                 totalDiscount
             },
-            orders: filtered,
-            productStats,
+            orders: paginatedOrders,
+            productStats: productStats, // Usually smaller list, but could be sliced if needed
             categoryStats,
             customerStats,
             ledger: {
-                entries: ledgerEntries,
-                totalCredit
+                entries: paginatedLedger,
+                totalCredit,
+                totalCount: allLedgerEntries.length
+            },
+            pagination: {
+                totalCount: filtered.length,
+                totalPages: Math.ceil(filtered.length / limit),
+                currentPage: page,
+                limit
             }
         });
 
@@ -115,21 +170,46 @@ exports.getReport = async (req, res) => {
         res.status(500).json({ message: 'Server error retrieving reports' });
     }
 };
-// Get all orders
+// Get all orders (paginated)
 exports.getOrders = async (req, res) => {
     try {
-        const orders = await Order.findAll({
-            where: { companyId: req.user.companyId },
-            include: [
-                {
-                    association: 'items',
-                    include: ['product'] // Include Product details
-                },
-                'customer', 'waiter', 'table', 'branch'
-            ],
-            order: [['createdAt', 'DESC']]
+        const { search, status } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        const where = { companyId: req.user.companyId };
+        if (status) where.status = status;
+
+        const include = [
+            {
+                association: 'items',
+                include: ['product']
+            },
+            'customer', 'waiter', 'table', 'branch'
+        ];
+
+        if (search) {
+            where[Op.or] = [
+                { id: { [Op.like]: `%${search}%` } },
+                { '$customer.name$': { [Op.like]: `%${search}%` } }
+            ];
+        }
+
+        const { count, rows: orders } = await Order.findAndCountAll({
+            where,
+            include,
+            order: [['createdAt', 'DESC']],
+            limit,
+            offset
         });
-        res.json(orders);
+
+        res.json({
+            orders,
+            totalCount: count,
+            totalPages: Math.ceil(count / limit),
+            currentPage: page
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error' });
@@ -168,7 +248,9 @@ exports.createOrder = async (req, res) => {
                     productId: item.productId,
                     quantity: item.quantity,
                     price: item.price,
-                    total: item.total
+                    total: item.total,
+                    variations: item.variations,
+                    addons: item.addons
                 }, { transaction });
 
                 // Update product stock (legacy basic tracking)
