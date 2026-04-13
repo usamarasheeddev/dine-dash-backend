@@ -147,9 +147,10 @@ exports.getDashboardStats = async (req, res) => {
             const last24Hrs = new Date(new Date().getTime() - 24 * 60 * 60 * 1000);
 
             // Note: PostgreSQL DATE_TRUNC shifted by company timezone
+            const timeExpr = sequelize.fn('date_trunc', 'hour', sequelize.literal(`"Order"."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE '${tz}'`));
             const graphQuery = await Order.findAll({
                 attributes: [
-                    [sequelize.fn('date_trunc', 'hour', sequelize.literal(`"Order"."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE '${tz}'`)), 'time'],
+                    [timeExpr, 'time'],
                     [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
                 ],
                 where: {
@@ -157,8 +158,8 @@ exports.getDashboardStats = async (req, res) => {
                     status: 'completed',
                     createdAt: { [Op.gte]: last24Hrs }
                 },
-                group: [sequelize.fn('date_trunc', 'hour', sequelize.col('createdAt'))],
-                order: [[sequelize.fn('date_trunc', 'hour', sequelize.col('createdAt')), 'ASC']],
+                group: [timeExpr],
+                order: [[timeExpr, 'ASC']],
                 raw: true
             });
 
@@ -184,9 +185,10 @@ exports.getDashboardStats = async (req, res) => {
             // Last 7 days
             const last7Days = new Date(new Date().setDate(new Date().getDate() - 7));
 
+            const timeExpr = sequelize.fn('date_trunc', 'day', sequelize.literal(`"Order"."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE '${tz}'`));
             const graphQuery = await Order.findAll({
                 attributes: [
-                    [sequelize.fn('date_trunc', 'day', sequelize.literal(`"Order"."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE '${tz}'`)), 'time'],
+                    [timeExpr, 'time'],
                     [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
                 ],
                 where: {
@@ -194,8 +196,8 @@ exports.getDashboardStats = async (req, res) => {
                     status: 'completed',
                     createdAt: { [Op.gte]: last7Days }
                 },
-                group: [sequelize.fn('date_trunc', 'day', sequelize.col('createdAt'))],
-                order: [[sequelize.fn('date_trunc', 'day', sequelize.col('createdAt')), 'ASC']],
+                group: [timeExpr],
+                order: [[timeExpr, 'ASC']],
                 raw: true
             });
 
@@ -217,9 +219,10 @@ exports.getDashboardStats = async (req, res) => {
             // Last 30 days
             const last30Days = new Date(new Date().setDate(new Date().getDate() - 30));
 
+            const timeExpr = sequelize.fn('date_trunc', 'day', sequelize.literal(`"Order"."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE '${tz}'`));
             const graphQuery = await Order.findAll({
                 attributes: [
-                    [sequelize.fn('date_trunc', 'day', sequelize.literal(`"Order"."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE '${tz}'`)), 'time'],
+                    [timeExpr, 'time'],
                     [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
                 ],
                 where: {
@@ -227,8 +230,8 @@ exports.getDashboardStats = async (req, res) => {
                     status: 'completed',
                     createdAt: { [Op.gte]: last30Days }
                 },
-                group: [sequelize.fn('date_trunc', 'day', sequelize.col('createdAt'))],
-                order: [[sequelize.fn('date_trunc', 'day', sequelize.col('createdAt')), 'ASC']],
+                group: [timeExpr],
+                order: [[timeExpr, 'ASC']],
                 raw: true
             });
 
