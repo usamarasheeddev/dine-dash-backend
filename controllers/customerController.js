@@ -122,18 +122,20 @@ exports.addLedgerEntry = async (req, res) => {
             date: new Date()
         });
 
-        // Update customer balance: payment reduces balance, credit/debit increase balance (usually debt is positive)
+        // Balance = amount customer owes the company (debt).
+        // Debit  → customer is charged / owes more  → balance increases (+)
+        // Credit → credit is given to customer      → balance decreases (-)
+        // Payment→ customer pays off debt            → balance decreases (-)
         let balanceChange = 0;
-        if (type === 'payment') {
-            balanceChange = -parsedAmount;
+        if (type === 'debit') {
+            balanceChange = parsedAmount;   // Customer owes more
         } else {
-            // credit/debit adds to customer balance (debt to company)
-            balanceChange = parsedAmount;
+            balanceChange = -parsedAmount;  // credit or payment reduces what they owe
         }
 
         customer.current_balance = Number(customer.current_balance || 0) + balanceChange;
 
-        // Prevent negative total balances (optional; depending on biz logic. Usually ok if they overpay)
+        // Prevent negative balances (overpayment clamps to 0)
         if (customer.current_balance < 0) {
             customer.current_balance = 0;
         }

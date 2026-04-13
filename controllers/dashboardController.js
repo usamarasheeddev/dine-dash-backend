@@ -18,10 +18,11 @@ exports.getDashboardStats = async (req, res) => {
         const todayEnd = fromZonedTime(endOfDay(toZonedTime(now, tz)), tz);
 
         // Fetch aggregate for Today
-        const todayOrders = await Order.findAll({
+        const todayStatsQuery = await Order.findAll({
             attributes: [
                 [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
-                [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
+                [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue'],
+                [sequelize.literal('SUM(CASE WHEN "paymentMethod" = \'credit\' THEN "finalTotal" ELSE 0 END)'), 'credit']
             ],
             where: {
                 companyId,
@@ -33,7 +34,8 @@ exports.getDashboardStats = async (req, res) => {
             raw: true
         });
 
-        const todayRevenue = Number(todayOrders[0].revenue || 0);
+        const todayRevenue = Number(todayStatsQuery[0].revenue || 0);
+        const todayCredit = Number(todayStatsQuery[0].credit || 0);
         const todayOrdersCount = await Order.count({
             where: {
                 companyId,
@@ -47,7 +49,8 @@ exports.getDashboardStats = async (req, res) => {
         const allTimeStats = await Order.findAll({
             attributes: [
                 [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
-                [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
+                [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue'],
+                [sequelize.literal('SUM(CASE WHEN "paymentMethod" = \'credit\' THEN "finalTotal" ELSE 0 END)'), 'credit']
             ],
             where: {
                 companyId,
@@ -59,6 +62,7 @@ exports.getDashboardStats = async (req, res) => {
         const totalOrdersCount = await Order.count({ where: { companyId } });
         const totalCompletedCount = Number(allTimeStats[0].count || 0);
         const totalRevenue = Number(allTimeStats[0].revenue || 0);
+        const totalCredit = Number(allTimeStats[0].credit || 0);
         const avgOrderValue = totalCompletedCount > 0 ? totalRevenue / totalCompletedCount : 0;
 
         // 2. Orders by Status
@@ -151,7 +155,8 @@ exports.getDashboardStats = async (req, res) => {
             const graphQuery = await Order.findAll({
                 attributes: [
                     [timeExpr, 'time'],
-                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
+                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue'],
+                    [sequelize.literal('SUM(CASE WHEN "paymentMethod" = \'credit\' THEN "finalTotal" ELSE 0 END)'), 'credit']
                 ],
                 where: {
                     companyId,
@@ -169,7 +174,7 @@ exports.getDashboardStats = async (req, res) => {
                 const dateKey = new Date(g.time);
                 // format as e.g., 2 PM
                 const label = dateKey.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
-                hoursMap[label] = Number(g.revenue);
+                hoursMap[label] = { revenue: Number(g.revenue), credit: Number(g.credit) };
             });
 
             for (let i = 23; i >= 0; i--) {
@@ -177,7 +182,11 @@ exports.getDashboardStats = async (req, res) => {
                 d.setHours(d.getHours() - i);
                 const label = d.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
                 if (!graphData.find(x => x.day === label)) {
-                    graphData.push({ day: label, revenue: hoursMap[label] || 0 });
+                    graphData.push({ 
+                        day: label, 
+                        revenue: hoursMap[label]?.revenue || 0,
+                        credit: hoursMap[label]?.credit || 0 
+                    });
                 }
             }
 
@@ -189,7 +198,8 @@ exports.getDashboardStats = async (req, res) => {
             const graphQuery = await Order.findAll({
                 attributes: [
                     [timeExpr, 'time'],
-                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
+                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue'],
+                    [sequelize.literal('SUM(CASE WHEN "paymentMethod" = \'credit\' THEN "finalTotal" ELSE 0 END)'), 'credit']
                 ],
                 where: {
                     companyId,
@@ -205,14 +215,18 @@ exports.getDashboardStats = async (req, res) => {
             graphQuery.forEach(g => {
                 const dateKey = new Date(g.time);
                 const label = dateKey.toLocaleDateString("en", { weekday: "short" });
-                daysMap[label] = Number(g.revenue);
+                daysMap[label] = { revenue: Number(g.revenue), credit: Number(g.credit) };
             });
 
             for (let i = 6; i >= 0; i--) {
                 const d = new Date();
                 d.setDate(d.getDate() - i);
                 const label = d.toLocaleDateString("en", { weekday: "short" });
-                graphData.push({ day: label, revenue: daysMap[label] || 0 });
+                graphData.push({ 
+                    day: label, 
+                    revenue: daysMap[label]?.revenue || 0,
+                    credit: daysMap[label]?.credit || 0
+                });
             }
 
         } else if (timeframe === 'monthly') {
@@ -223,7 +237,8 @@ exports.getDashboardStats = async (req, res) => {
             const graphQuery = await Order.findAll({
                 attributes: [
                     [timeExpr, 'time'],
-                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue']
+                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue'],
+                    [sequelize.literal('SUM(CASE WHEN "paymentMethod" = \'credit\' THEN "finalTotal" ELSE 0 END)'), 'credit']
                 ],
                 where: {
                     companyId,
@@ -240,14 +255,18 @@ exports.getDashboardStats = async (req, res) => {
                 const dateKey = new Date(g.time);
                 // e.g., "Oct 12"
                 const label = dateKey.toLocaleDateString("en", { month: "short", day: "numeric" });
-                daysMap[label] = Number(g.revenue);
+                daysMap[label] = { revenue: Number(g.revenue), credit: Number(g.credit) };
             });
 
             for (let i = 29; i >= 0; i--) {
                 const d = new Date();
                 d.setDate(d.getDate() - i);
                 const label = d.toLocaleDateString("en", { month: "short", day: "numeric" });
-                graphData.push({ day: label, revenue: daysMap[label] || 0 });
+                graphData.push({ 
+                    day: label, 
+                    revenue: daysMap[label]?.revenue || 0,
+                    credit: daysMap[label]?.credit || 0
+                });
             }
         }
 
@@ -262,8 +281,10 @@ exports.getDashboardStats = async (req, res) => {
         res.json({
             stats: {
                 todayRevenue,
+                todayCredit,
                 todayOrdersCount,
                 totalRevenue,
+                totalCredit,
                 totalOrdersCount,
                 totalCompletedCount,
                 avgOrderValue

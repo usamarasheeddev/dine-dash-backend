@@ -1,4 +1,4 @@
-const { Order, OrderItem, Product, Customer, InventoryItem, InventoryLedger, Table, Company, sequelize } = require('../models');
+const { Order, OrderItem, Product, Customer, CustomerLedger, InventoryItem, InventoryLedger, Table, Company, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { startOfDay, endOfDay } = require('date-fns');
 const { toZonedTime, fromZonedTime } = require('date-fns-tz');
@@ -291,10 +291,10 @@ exports.createOrder = async (req, res) => {
         // For now, assuming standard logic. If there's a customerId, maybe update their balance?
         // Leaving that for Ledger/Voucher logic or explicit "On Account" payment method.
 
-        // Update Table status to occupied if dine-in
+        // Update Table status to reserved if dine-in
         if (orderType === 'dine-in' && tableId) {
             await Table.update(
-                { status: 'occupied' },
+                { status: 'reserved' },
                 { where: { id: tableId, companyId: req.user.companyId }, transaction }
             );
         }
@@ -344,30 +344,62 @@ exports.updateOrderStatus = async (req, res) => {
 
 // Process Payment / Complete Order
 exports.payOrder = async (req, res) => {
+    const transaction = await sequelize.transaction();
     try {
         const { id } = req.params;
         const { paymentMethod, discount, finalTotal, status } = req.body;
-        const order = await Order.findOne({ where: { id, companyId: req.user.companyId } });
+        const order = await Order.findOne({ 
+            where: { id, companyId: req.user.companyId },
+            transaction
+        });
 
         if (!order) {
+            await transaction.rollback();
             return res.status(404).json({ message: 'Order not found' });
+        }
+
+        if (paymentMethod === 'credit' && !order.customerId) {
+            await transaction.rollback();
+            return res.status(400).json({ message: 'Credit payment requires a registered customer.' });
         }
 
         order.paymentMethod = paymentMethod;
         if (discount !== undefined) order.discount = discount;
         if (finalTotal !== undefined) order.finalTotal = finalTotal;
-        order.status = status || 'completed'; // usually paid means completed or preparing
-        await order.save();
+        order.status = status || 'completed'; 
+        await order.save({ transaction });
+
+        // If it's a credit order, update ledger and customer balance
+        if (paymentMethod === 'credit') {
+            const amount = parseFloat(order.finalTotal);
+            
+            await CustomerLedger.create({
+                customerId: order.customerId,
+                companyId: req.user.companyId,
+                date: new Date(),
+                type: 'credit',
+                amount: amount,
+                note: `Credit for POS Order #${order.id}`
+            }, { transaction });
+
+            await Customer.increment('current_balance', {
+                by: amount,
+                where: { id: order.customerId, companyId: req.user.companyId },
+                transaction
+            });
+        }
 
         if ((order.status === 'completed' || order.status === 'cancelled') && order.tableId) {
             await Table.update(
                 { status: 'available' },
-                { where: { id: order.tableId, companyId: req.user.companyId } }
+                { where: { id: order.tableId, companyId: req.user.companyId }, transaction }
             );
         }
 
+        await transaction.commit();
         res.json(order);
     } catch (error) {
+        await transaction.rollback();
         console.error(error);
         res.status(500).json({ message: 'Server error' });
     }
