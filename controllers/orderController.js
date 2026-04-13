@@ -1,6 +1,7 @@
-const { Order, OrderItem, Product, Customer, InventoryItem, InventoryLedger, Table, sequelize } = require('../models');
+const { Order, OrderItem, Product, Customer, InventoryItem, InventoryLedger, Table, Company, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { startOfDay, endOfDay } = require('date-fns');
+const { toZonedTime, fromZonedTime } = require('date-fns-tz');
 
 // ... (existing code, add at bottom)
 
@@ -10,12 +11,11 @@ exports.getReport = async (req, res) => {
         const { startDate, endDate, search, status, orderType } = req.query;
         const companyId = req.user.companyId;
 
-        if (!startDate || !endDate) {
-            return res.status(400).json({ message: 'startDate and endDate are required' });
-        }
+        const company = await Company.findByPk(companyId);
+        const tz = company?.timezone || 'UTC';
 
-        const start = startOfDay(new Date(startDate));
-        const end = endOfDay(new Date(endDate));
+        const start = fromZonedTime(startOfDay(toZonedTime(new Date(startDate), tz)), tz);
+        const end = fromZonedTime(endOfDay(toZonedTime(new Date(endDate), tz)), tz);
 
         const dateFilter = {
             companyId,
