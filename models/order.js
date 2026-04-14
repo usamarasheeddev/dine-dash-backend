@@ -38,6 +38,10 @@ module.exports = (sequelize, DataTypes) => {
     isUploaded: {
       type: DataTypes.BOOLEAN,
       defaultValue: false
+    },
+    editHistory: {
+      type: DataTypes.JSON,
+      defaultValue: []
     }
   }, {
     sequelize,

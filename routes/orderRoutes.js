@@ -8,5 +8,6 @@ router.get('/report', auth(), orderController.getReport);
 router.post('/', auth(), orderController.createOrder);
 router.put('/:id/status', auth(), orderController.updateOrderStatus);
 router.put('/:id/pay', auth(), orderController.payOrder);
+router.put('/:id/edit', auth(), orderController.editOrder);
 
 module.exports = router;

@@ -404,3 +404,145 @@ exports.payOrder = async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 };
+
+// Edit Order
+exports.editOrder = async (req, res) => {
+    const transaction = await sequelize.transaction();
+    try {
+        const { id } = req.params;
+        const { items, subTotal, tax, finalTotal, changes } = req.body;
+        const companyId = req.user.companyId;
+
+        const order = await Order.findOne({
+            where: { id, companyId },
+            include: [{ association: 'items' }],
+            transaction
+        });
+
+        if (!order) {
+            await transaction.rollback();
+            return res.status(404).json({ message: 'Order not found' });
+        }
+
+        if (order.status === 'completed' || order.status === 'cancelled') {
+            await transaction.rollback();
+            return res.status(400).json({ message: 'Completed or cancelled orders cannot be edited.' });
+        }
+
+        // 1. Revert stock for old items
+        for (const oldItem of order.items) {
+            const product = await Product.findByPk(oldItem.productId, { transaction });
+            if (product) {
+                product.stock_quantity += parseFloat(oldItem.quantity);
+                await product.save({ transaction });
+
+                const invItem = await InventoryItem.findOne({
+                    where: { productId: product.id, companyId },
+                    transaction
+                });
+                if (invItem) {
+                    const previousStock = parseFloat(invItem.quantity || 0);
+                    const newStock = previousStock + parseFloat(oldItem.quantity);
+                    invItem.quantity = newStock;
+                    await invItem.save({ transaction });
+
+                    await InventoryLedger.create({
+                        inventoryItemId: invItem.id,
+                        companyId,
+                        userId: req.user.id,
+                        type: 'adjustment',
+                        quantityChange: parseFloat(oldItem.quantity),
+                        previousStock,
+                        newStock,
+                        note: `Reverted for Order Edit (Order #${order.id})`
+                    }, { transaction });
+                }
+            }
+        }
+
+        // 2. Delete old order items
+        await OrderItem.destroy({ where: { orderId: order.id }, transaction });
+
+        // 3. Create new order items and deduct stock
+        for (const item of items) {
+            // Find product by name or productId (frontend might send either if added new)
+            let productId = item.productId;
+            if (!productId && item.product?.name) {
+                const p = await Product.findOne({ where: { name: item.product.name, companyId }, transaction });
+                if (p) productId = p.id;
+            }
+            
+            if (!productId) {
+                // If it's still missing, try to find by 'name' field
+                const p = await Product.findOne({ where: { name: item.name, companyId }, transaction });
+                if (p) productId = p.id;
+            }
+
+            await OrderItem.create({
+                orderId: order.id,
+                productId: productId,
+                quantity: item.qty || item.quantity,
+                price: item.price,
+                total: (item.qty || item.quantity) * item.price,
+                variations: item.variations,
+                addons: item.addons
+            }, { transaction });
+
+            if (productId) {
+                const product = await Product.findByPk(productId, { transaction });
+                if (product) {
+                    product.stock_quantity -= parseFloat(item.qty || item.quantity);
+                    await product.save({ transaction });
+
+                    const invItem = await InventoryItem.findOne({
+                        where: { productId: product.id, companyId },
+                        transaction
+                    });
+                    if (invItem) {
+                        const deductAmount = parseFloat(item.qty || item.quantity);
+                        const previousStock = parseFloat(invItem.quantity || 0);
+                        const newStock = previousStock - deductAmount;
+
+                        invItem.quantity = newStock;
+                        await invItem.save({ transaction });
+
+                        await InventoryLedger.create({
+                            inventoryItemId: invItem.id,
+                            companyId,
+                            userId: req.user.id,
+                            type: 'deduction',
+                            quantityChange: -deductAmount,
+                            previousStock,
+                            newStock,
+                            note: `Deducted for Order Edit (Order #${order.id})`
+                        }, { transaction });
+                    }
+                }
+            }
+        }
+
+        // 4. Update order record
+        order.subTotal = subTotal;
+        order.tax = tax;
+        order.finalTotal = finalTotal;
+
+        // Update edit history
+        const history = Array.isArray(order.editHistory) ? [...order.editHistory] : [];
+        history.push({
+            timestamp: new Date().toISOString(),
+            changes: changes || []
+        });
+        order.editHistory = history;
+        order.changed('editHistory', true);
+
+        await order.save({ transaction });
+
+        await transaction.commit();
+        res.json(order);
+    } catch (error) {
+        await transaction.rollback();
+        console.error("Order Edit Error:", error);
+        res.status(500).json({ message: 'Server error editing order' });
+    }
+};
+
