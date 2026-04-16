@@ -21,6 +21,17 @@ exports.login = async (req, res) => {
             return res.status(400).json({ message: 'Invalid credentials' });
         }
 
+        // Check Company Status (Exempt superadmins)
+        if (user.role !== 'superadmin' && user.companyId) {
+            const company = await Company.findByPk(user.companyId);
+            if (!company || company.status !== 'active') {
+                return res.status(403).json({ 
+                    success: false, 
+                    message: `Login blocked: Your company account is ${company ? company.status : 'inactive'}. Please contact support.` 
+                });
+            }
+        }
+
         // Generate Token
         const token = jwt.sign(
             { id: user.id, role: user.role, companyId: user.companyId },
@@ -116,6 +127,17 @@ exports.getUser = async (req, res) => {
         const user = await User.findByPk(req.user.id);
         if (!user) {
             return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        // Check Company Status (Exempt superadmins)
+        if (user.role !== 'superadmin' && user.companyId) {
+            const company = await Company.findByPk(user.companyId);
+            if (!company || company.status !== 'active') {
+                return res.status(403).json({ 
+                    success: false, 
+                    message: `Access blocked: Your company account is ${company ? company.status : 'inactive'}. Please contact support.` 
+                });
+            }
         }
 
         res.json({

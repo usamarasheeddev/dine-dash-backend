@@ -5,7 +5,7 @@ module.exports = (roles = []) => {
         roles = [roles];
     }
 
-    return (req, res, next) => {
+    return async (req, res, next) => {
         let token = req.header('x-auth-token');
         const authHeader = req.header('Authorization');
 
@@ -20,6 +20,18 @@ module.exports = (roles = []) => {
         try {
             const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
             req.user = decoded;
+
+            // Check Company Status (Exempt superadmins)
+            if (req.user.role !== 'superadmin' && req.user.companyId) {
+                const { Company } = require('../models');
+                const company = await Company.findByPk(req.user.companyId);
+                if (!company || company.status !== 'active') {
+                    return res.status(403).json({ 
+                        success: false, 
+                        message: `Access blocked: Your company account is ${company ? company.status : 'inactive'}. Please contact support.` 
+                    });
+                }
+            }
 
             if (roles.length && !roles.includes(req.user.role)) {
                 return res.status(403).json({ message: 'Access denied: Insufficient permissions' });
