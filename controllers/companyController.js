@@ -198,3 +198,42 @@ exports.updateMySettings = async (req, res) => {
         res.status(500).json({ message: 'Server error updating company settings', error: error.message });
     }
 };
+
+// Renew Subscription (Admin only)
+exports.renewSubscription = async (req, res) => {
+    try {
+        const company = await Company.findByPk(req.user.companyId);
+        if (!company) {
+            return res.status(404).json({ message: 'Company not found' });
+        }
+
+        const priceMap = { 'basic': 50, 'premium': 150, 'enterprise': 500 };
+        const price = priceMap[company.subscriptionPlan] || priceMap['basic'];
+
+        // Logic: If already expired, start from now. If not, append to current expiry.
+        let currentExpiry = new Date(company.expiryDate);
+        let newExpiry = new Date();
+        
+        if (currentExpiry > new Date()) {
+            newExpiry = currentExpiry;
+        }
+        
+        newExpiry.setDate(newExpiry.getDate() + 30);
+
+        await company.update({
+            expiryDate: newExpiry,
+            subscriptionPrice: price,
+            status: 'active' // Re-activate if it was disabled due to expiry
+        });
+
+        res.json({ 
+            message: 'Subscription renewed successfully', 
+            expiryDate: newExpiry,
+            subscriptionPlan: company.subscriptionPlan
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error renewing subscription', error: error.message });
+    }
+};
+

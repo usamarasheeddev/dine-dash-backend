@@ -12,6 +12,9 @@ router.get('/stats', auth('superadmin'), companyController.getDashboardStats);
 router.get('/my-settings', auth(), companyController.getMySettings);
 router.put('/my-settings', auth(), companyController.updateMySettings);
 
+// Subscription routes
+router.post('/renew', auth(['admin', 'superadmin']), companyController.renewSubscription);
+
 // These must be at the bottom so /:id doesn't match literal paths like /my-settings
 router.put('/:id', auth('superadmin'), companyController.updateCompany);
 

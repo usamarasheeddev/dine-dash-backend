@@ -31,6 +31,14 @@ module.exports = (roles = []) => {
                         message: `Access blocked: Your company account is ${company ? company.status : 'inactive'}. Please contact support.` 
                     });
                 }
+
+                // Check Subscription Expiry
+                if (company.expiryDate && new Date() > new Date(company.expiryDate)) {
+                    return res.status(403).json({
+                        success: false,
+                        message: `Access blocked: Your subscription has expired on ${new Date(company.expiryDate).toLocaleDateString()}. Please renew to continue.`
+                    });
+                }
             }
 
             if (roles.length && !roles.includes(req.user.role)) {
