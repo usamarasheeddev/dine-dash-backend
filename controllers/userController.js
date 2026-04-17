@@ -18,7 +18,7 @@ exports.getStaff = async (req, res) => {
 
 exports.createStaff = async (req, res) => {
     try {
-        const { username, email, password, role, fullName, phone } = req.body;
+        const { username, email, password, role, fullName, phone, status } = req.body;
 
         const existingUser = await User.findOne({ where: { email } });
         if (existingUser) return res.status(400).json({ message: 'Email already exists' });
@@ -30,6 +30,7 @@ exports.createStaff = async (req, res) => {
             role: role || 'cashier',
             fullName,
             phone,
+            status: status || 'active',
             companyId: req.user.companyId
         });
 
@@ -46,7 +47,7 @@ exports.createStaff = async (req, res) => {
 exports.updateStaff = async (req, res) => {
     try {
         const { id } = req.params;
-        const { username, email, role, fullName, phone, password } = req.body;
+        const { username, email, role, fullName, phone, password, status } = req.body;
 
         const staff = await User.findOne({ where: { id, companyId: req.user.companyId } });
         if (!staff) return res.status(404).json({ message: 'Staff member not found' });
@@ -61,6 +62,7 @@ exports.updateStaff = async (req, res) => {
         staff.role = role || staff.role;
         staff.fullName = fullName || staff.fullName;
         staff.phone = phone || staff.phone;
+        staff.status = status || staff.status;
 
         if (password && password.trim() !== '') {
             staff.password = password; // pre-save hook will hash it

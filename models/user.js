@@ -43,7 +43,11 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     },
     fullName: DataTypes.STRING,
-    phone: DataTypes.STRING
+    phone: DataTypes.STRING,
+    status: {
+      type: DataTypes.STRING,
+      defaultValue: 'active'
+    }
   }, {
     hooks: {
       beforeCreate: async (user) => {

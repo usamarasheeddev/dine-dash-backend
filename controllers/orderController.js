@@ -8,7 +8,7 @@ const { toZonedTime, fromZonedTime } = require('date-fns-tz');
 // Get Reports Data (Aggregates)
 exports.getReport = async (req, res) => {
     try {
-        const { startDate, endDate, search, status, orderType } = req.query;
+        const { startDate, endDate, search, status, orderType, exportAll } = req.query;
         const companyId = req.user.companyId;
 
         const company = await Company.findByPk(companyId);
@@ -117,9 +117,15 @@ exports.getReport = async (req, res) => {
         });
         const customerStats = Object.values(customerMap).sort((a, b) => b.spent - a.spent);
 
+        const isExportAll = exportAll === 'true';
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const skip = (page - 1) * limit;
+
+        const productPage = parseInt(req.query.productPage) || 1;
+        const customerPage = parseInt(req.query.customerPage) || 1;
+        const productSkip = (productPage - 1) * limit;
+        const customerSkip = (customerPage - 1) * limit;
 
         // 5. Ledger entries (credit orders)
         const allLedgerEntries = filtered
@@ -135,9 +141,11 @@ exports.getReport = async (req, res) => {
 
         const totalCredit = allLedgerEntries.reduce((s, e) => s + e.amount, 0);
 
-        // Slice lists for pagination
-        const paginatedOrders = filtered.slice(skip, skip + limit);
-        const paginatedLedger = allLedgerEntries.slice(skip, skip + limit);
+        // Paginate each list (skip if exporting all)
+        const paginatedOrders = isExportAll ? filtered : filtered.slice(skip, skip + limit);
+        const paginatedProducts = isExportAll ? productStats : productStats.slice(productSkip, productSkip + limit);
+        const paginatedCustomers = isExportAll ? customerStats : customerStats.slice(customerSkip, customerSkip + limit);
+        const paginatedLedger = isExportAll ? allLedgerEntries : allLedgerEntries.slice(skip, skip + limit);
 
         res.json({
             summary: {
@@ -149,9 +157,9 @@ exports.getReport = async (req, res) => {
                 totalDiscount
             },
             orders: paginatedOrders,
-            productStats: productStats, // Usually smaller list, but could be sliced if needed
+            productStats: paginatedProducts,
             categoryStats,
-            customerStats,
+            customerStats: paginatedCustomers,
             ledger: {
                 entries: paginatedLedger,
                 totalCredit,
@@ -161,6 +169,18 @@ exports.getReport = async (req, res) => {
                 totalCount: filtered.length,
                 totalPages: Math.ceil(filtered.length / limit),
                 currentPage: page,
+                limit
+            },
+            productPagination: {
+                totalCount: productStats.length,
+                totalPages: Math.ceil(productStats.length / limit),
+                currentPage: productPage,
+                limit
+            },
+            customerPagination: {
+                totalCount: customerStats.length,
+                totalPages: Math.ceil(customerStats.length / limit),
+                currentPage: customerPage,
                 limit
             }
         });

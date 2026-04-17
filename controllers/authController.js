@@ -15,6 +15,11 @@ exports.login = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
+        // Check if user is active
+        if (user.status === 'inactive') {
+            return res.status(403).json({ success: false, message: 'Your account has been deactivated. Please contact your administrator.' });
+        }
+
         // Check password
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
@@ -127,6 +132,11 @@ exports.getUser = async (req, res) => {
         const user = await User.findByPk(req.user.id);
         if (!user) {
             return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        // Check if user is active
+        if (user.status === 'inactive') {
+            return res.status(403).json({ success: false, message: 'Access denied: Your account is inactive.' });
         }
 
         // Check Company Status (Exempt superadmins)
