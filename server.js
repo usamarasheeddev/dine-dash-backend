@@ -29,6 +29,7 @@ app.use('/api/companies', require('./routes/companyRoutes'));
 app.use('/api/inventory', require('./routes/inventoryRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
+app.use('/api/subscription-plans', require('./routes/subscriptionPlanRoutes'));
 
 
 // Database Connection and Server Start

@@ -13,6 +13,8 @@ module.exports = (sequelize, DataTypes) => {
       // define association here
       Company.hasMany(models.User, { foreignKey: 'companyId', as: 'users' });
       Company.hasMany(models.InventoryItem, { foreignKey: 'companyId', as: 'inventoryItems' });
+      Company.hasMany(models.Branch, { foreignKey: 'companyId', as: 'branches' });
+      Company.hasMany(models.SubscriptionTransaction, { foreignKey: 'companyId', as: 'transactions' });
     }
   }
   Company.init({

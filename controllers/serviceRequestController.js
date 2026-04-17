@@ -1,4 +1,4 @@
-const { ServiceRequest, Company, User, sequelize } = require('../models');
+const { ServiceRequest, Company, User, SubscriptionPlan, SubscriptionTransaction, sequelize } = require('../models');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 
@@ -53,7 +53,7 @@ exports.updateRequestStatus = async (req, res) => {
     let emailData = null;
     try {
         const { id } = req.params;
-        const { status } = req.body; // 'approved' or 'rejected'
+        const { status, planSlug, trialDays } = req.body; // 'approved' or 'rejected'
 
         const request = await ServiceRequest.findByPk(id);
         if (!request) {
@@ -61,21 +61,42 @@ exports.updateRequestStatus = async (req, res) => {
         }
 
         if (status === 'approved' && request.status !== 'approved') {
-            const priceMap = { 'basic': 50, 'premium': 150, 'enterprise': 500 };
+            let planName = 'basic';
+            let planPrice = 50;
+            let duration = 30;
+
+            if (planSlug) {
+                const plan = await SubscriptionPlan.findOne({ where: { slug: planSlug } });
+                if (plan) {
+                    planName = plan.name;
+                    planPrice = plan.price;
+                    duration = plan.durationDays;
+                }
+            }
+
+            // trialDays override if provided
+            if (trialDays) {
+                duration = parseInt(trialDays);
+                planPrice = 0; // Trials are free
+                planName = 'trial';
+            }
+
             const expiry = new Date();
-            expiry.setDate(expiry.getDate() + 30);
+            expiry.setDate(expiry.getDate() + duration);
 
             const company = await Company.create({
                 name: request.companyName,
                 email: request.email,
                 status: 'active',
-                subscriptionPlan: 'basic', // Default plan for requests
-                subscriptionPrice: priceMap['basic'],
-                expiryDate: expiry
+                subscriptionPlan: planName,
+                subscriptionPrice: planPrice,
+                expiryDate: expiry,
+                address: request.address,
+                phone: request.phone
             }, { transaction });
 
             // Generate a random secure password
-            const generatedPassword = Math.random().toString(36).slice(-8) + Math.floor(Math.random() * 1000);
+            const generatedPassword = Math.random().toString(36).slice(-10) + Math.floor(Math.random() * 1000);
 
             await User.create({
                 username: 'Admin',
@@ -85,11 +106,42 @@ exports.updateRequestStatus = async (req, res) => {
                 companyId: company.id
             }, { transaction });
 
+            // Log the initial transaction for revenue tracking
+            if (planPrice > 0) {
+                await SubscriptionTransaction.create({
+                    companyId: company.id,
+                    planName: planName,
+                    amount: planPrice,
+                    type: 'activation',
+                    status: 'completed',
+                    notes: `Initial subscription on approval of service request.`
+                }, { transaction });
+            }
+
             emailData = {
                 from: process.env.EMAIL_USER || 'no-reply@martpos.com',
                 to: request.email,
                 subject: 'Account Approved - Mart POS',
-                html: `<h3>Welcome to Mart POS</h3><p>Your request for <b>${request.companyName}</b> has been approved!</p><p>You can now log in using these credentials:</p><p><b>Email:</b> ${request.email}<br/><b>Password:</b> ${generatedPassword}</p><p><i>Please change your password immediately after logging in.</i></p>`
+                html: `
+                    <div style="font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+                        <h2 style="color: #4f46e5;">Welcome to Mart POS</h2>
+                        <p>Hello,</p>
+                        <p>Your service request for <strong>${request.companyName}</strong> has been approved!</p>
+                        <p>You can now access your dashboard using the following credentials:</p>
+                        <div style="background: #f9fafb; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                            <p style="margin: 5px 0;"><strong>Email:</strong> ${request.email}</p>
+                            <p style="margin: 5px 0;"><strong>Password:</strong> <code style="background: #eee; padding: 2px 4px; border-radius: 4px;">${generatedPassword}</code></p>
+                        </div>
+                        <p><strong>Subscription Details:</strong></p>
+                        <ul>
+                            <li>Plan: ${planName.toUpperCase()}</li>
+                            <li>Expires on: ${expiry.toLocaleDateString()}</li>
+                        </ul>
+                        <p style="color: #ef4444; font-size: 0.9em;"><em>Note: Please change your password immediately after your first login for security.</em></p>
+                        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+                        <p style="font-size: 0.8em; color: #6b7280; text-align: center;">© ${new Date().getFullYear()} Mart POS. All rights reserved.</p>
+                    </div>
+                `
             };
 
             request.status = 'approved';

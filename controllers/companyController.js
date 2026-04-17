@@ -1,4 +1,4 @@
-const { Company, User, ServiceRequest, sequelize } = require('../models');
+const { Company, User, ServiceRequest, SubscriptionPlan, SubscriptionTransaction, sequelize, Branch } = require('../models');
 const { Op } = require('sequelize');
 
 // Create a new company manually (Super Admin only)
@@ -82,7 +82,7 @@ exports.getDashboardStats = async (req, res) => {
         const activeCompanies = await Company.count({ where: { status: 'active' } });
         const disabledCompanies = await Company.count({ where: { status: 'disabled' } });
 
-        const totalRevenue = await Company.sum('subscriptionPrice') || 0;
+        const totalRevenue = await SubscriptionTransaction.sum('amount') || 0;
 
         const sevenDaysFromNow = new Date();
         sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
@@ -132,13 +132,24 @@ exports.updateCompany = async (req, res) => {
 
         if (subscriptionPlan) {
             const priceMap = { 'basic': 50, 'premium': 150, 'enterprise': 500 };
+            const planPrice = priceMap[subscriptionPlan] || priceMap['basic'];
             updates.subscriptionPlan = subscriptionPlan;
-            updates.subscriptionPrice = priceMap[subscriptionPlan] || priceMap['basic'];
+            updates.subscriptionPrice = planPrice;
 
             // Adjust expiry if plan upgrades - simple logic to reset 30 days for now
             const expiry = new Date();
             expiry.setDate(expiry.getDate() + 30);
             updates.expiryDate = expiry;
+            
+            // Log transaction for plan update
+            await SubscriptionTransaction.create({
+                companyId: company.id,
+                planName: subscriptionPlan,
+                amount: planPrice,
+                type: 'activation',
+                status: 'completed',
+                notes: `Plan updated manually by SuperAdmin.`
+            });
         }
 
         await company.update(updates);
@@ -199,31 +210,48 @@ exports.updateMySettings = async (req, res) => {
     }
 };
 
-// Renew Subscription (Admin only)
+// Renew Subscription (Restricted to Super Admin as per request)
 exports.renewSubscription = async (req, res) => {
     try {
-        const company = await Company.findByPk(req.user.companyId);
+        // Enforce superadmin only for renewal
+        if (req.user.role !== 'superadmin') {
+            return res.status(403).json({ message: 'Only Super Admin can activate or renew subscriptions.' });
+        }
+
+        const companyId = req.params.id || req.user.companyId;
+        const company = await Company.findByPk(companyId);
         if (!company) {
             return res.status(404).json({ message: 'Company not found' });
         }
 
-        const priceMap = { 'basic': 50, 'premium': 150, 'enterprise': 500 };
-        const price = priceMap[company.subscriptionPlan] || priceMap['basic'];
+        const plan = await SubscriptionPlan.findOne({ where: { name: company.subscriptionPlan } });
+        const price = plan ? plan.price : company.subscriptionPrice;
+        const duration = plan ? plan.durationDays : 30;
 
         // Logic: If already expired, start from now. If not, append to current expiry.
-        let currentExpiry = new Date(company.expiryDate);
+        let currentExpiry = company.expiryDate ? new Date(company.expiryDate) : new Date();
         let newExpiry = new Date();
         
         if (currentExpiry > new Date()) {
             newExpiry = currentExpiry;
         }
         
-        newExpiry.setDate(newExpiry.getDate() + 30);
+        newExpiry.setDate(newExpiry.getDate() + duration);
 
         await company.update({
             expiryDate: newExpiry,
             subscriptionPrice: price,
-            status: 'active' // Re-activate if it was disabled due to expiry
+            status: 'active'
+        });
+
+        // Log transaction for renewal
+        await SubscriptionTransaction.create({
+            companyId: company.id,
+            planName: company.subscriptionPlan,
+            amount: price,
+            type: 'renewal',
+            status: 'completed',
+            notes: `Manual renewal by SuperAdmin.`
         });
 
         res.json({ 
@@ -237,3 +265,28 @@ exports.renewSubscription = async (req, res) => {
     }
 };
 
+// Get Company by ID with all details (Super Admin only)
+exports.getCompanyById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const company = await Company.findByPk(id, {
+            include: [
+                { model: User, as: 'users', attributes: { exclude: ['password'] } },
+                { model: Branch, as: 'branches' },
+                { model: SubscriptionTransaction, as: 'transactions' }
+            ],
+            order: [
+                [{ model: SubscriptionTransaction, as: 'transactions' }, 'createdAt', 'DESC']
+            ]
+        });
+
+        if (!company) {
+            return res.status(404).json({ message: 'Company not found' });
+        }
+
+        res.json(company);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error fetching company details', error: error.message });
+    }
+};

@@ -2,13 +2,20 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.addColumn('Orders', 'editHistory', {
-      type: Sequelize.JSON,
-      allowNull: true
-    });
+    const tableInfo = await queryInterface.describeTable('Orders');
+    if (!tableInfo.editHistory) {
+      await queryInterface.addColumn('Orders', 'editHistory', {
+        type: Sequelize.JSON,
+        allowNull: true
+      });
+    }
   },
 
   down: async (queryInterface, Sequelize) => {
-    await queryInterface.removeColumn('Orders', 'editHistory');
+    const tableInfo = await queryInterface.describeTable('Orders');
+    if (tableInfo.editHistory) {
+      await queryInterface.removeColumn('Orders', 'editHistory');
+    }
   }
 };
+
