@@ -191,17 +191,13 @@ exports.forgotPassword = async (req, res) => {
         // Dynamically get the origin URL to support both PointOfSale and SuperAdmin frontend panels
         const resetURL = `${req.headers.origin}/reset-password/${resetToken}`;
 
-        const message = `You are receiving this email because you (or someone else) have requested the reset of a password. Please make a PUT request to: \n\n ${resetURL}`;
-        const html = `<p>You requested a password reset</p>
-            <p>Click this <a href="${resetURL}">link</a> to set a new password.</p>
-            <p>This link is valid for 1 hour.</p>`;
+        const { getForgotPasswordTemplate } = require('../utils/emailTemplates');
 
         try {
             await sendEmail({
                 email: user.email,
-                subject: 'Password Reset Token',
-                message,
-                html
+                subject: 'Password Reset Request - DineDash POS',
+                html: getForgotPasswordTemplate(resetURL)
             });
 
             res.status(200).json({ success: true, message: 'Email sent' });

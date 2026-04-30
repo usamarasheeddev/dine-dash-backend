@@ -1,14 +1,10 @@
 const { ServiceRequest, Company, User, SubscriptionPlan, SubscriptionTransaction, sequelize } = require('../models');
-const bcrypt = require('bcryptjs');
-const nodemailer = require('nodemailer');
-
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.EMAIL_USER || 'your-email@gmail.com',
-        pass: process.env.EMAIL_PASS || 'your-app-password'
-    }
-});
+const sendEmail = require('../utils/email');
+const { 
+  getServiceRequestConfirmationTemplate, 
+  getAdminNotificationTemplate, 
+  getServiceApprovalTemplate 
+} = require('../utils/emailTemplates');
 
 // Submit a new service request
 exports.submitRequest = async (req, res) => {
@@ -28,6 +24,28 @@ exports.submitRequest = async (req, res) => {
             phone,
             address
         });
+
+        // Send Confirmation Email to Applicant
+        try {
+            await sendEmail({
+                email: email,
+                subject: 'Request Received - DineDash POS',
+                html: getServiceRequestConfirmationTemplate(companyName)
+            });
+        } catch (mailError) {
+            console.error('Initial mail notification failed to applicant:', mailError);
+        }
+
+        // Send Notification to Super Admin
+        try {
+            await sendEmail({
+                email: process.env.SMTP_USER || 'dinedashpos@gmail.com',
+                subject: `New Service Request: ${companyName}`,
+                html: getAdminNotificationTemplate({ companyName, email, phone, address })
+            });
+        } catch (mailError) {
+            console.error('Initial mail notification failed to super admin:', mailError);
+        }
 
         res.status(201).json({ message: 'Service request submitted successfully', request: newRequest });
     } catch (error) {
@@ -153,14 +171,17 @@ exports.updateRequestStatus = async (req, res) => {
 
         await transaction.commit();
 
+        // Send Approval Email to Applicant
         if (emailData) {
-            transporter.sendMail(emailData, function (error, info) {
-                if (error) {
-                    console.error('Error sending email:', error);
-                } else {
-                    console.log('Email sent: ' + info.response);
-                }
-            });
+            try {
+                await sendEmail({
+                    email: emailData.to,
+                    subject: 'Welcome to DineDash - Account Approved!',
+                    html: getServiceApprovalTemplate(request.companyName)
+                });
+            } catch (mailError) {
+                console.error('Approval email failed to send:', mailError);
+            }
         }
 
         res.json({ message: `Request ${status} successfully` });
