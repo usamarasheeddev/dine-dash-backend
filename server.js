@@ -42,14 +42,27 @@ app.use('/api/subscription-plans', require('./routes/subscriptionPlanRoutes'));
 
 
 // Database Connection and Server Start
-app.listen(PORT, async () => {
-    console.log(`Server running on port ${PORT}`);
-    try {
-        await sequelize.authenticate();
-        console.log('Database connected!');
-        await sequelize.sync({ alter: true });
-        console.log('✅ Database schemas synced successfully!');
-    } catch (err) {
-        console.error('Database connection failed:', err);
-    }
-});
+if (process.env.NODE_ENV !== 'production') {
+    sequelize.authenticate()
+        .then(() => {
+            console.log('Database connected!');
+            return sequelize.sync({ alter: true });
+        })
+        .then(() => {
+            console.log('✅ Database schemas synced successfully!');
+        })
+        .catch(err => {
+            console.error('Database connection failed:', err);
+        });
+
+    app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+} else {
+    // In production (Vercel), we just authenticate
+    sequelize.authenticate()
+        .then(() => console.log('Database connected (Production)'))
+        .catch(err => console.error('Database connection error:', err));
+}
+
+module.exports = app;
