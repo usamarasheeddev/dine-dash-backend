@@ -1,4 +1,4 @@
-const { InventoryItem, InventoryLedger, User, Product } = require('../models');
+const { InventoryItem, InventoryLedger, User, Product, sequelize } = require('../models');
 
 // Get all inventory items
 exports.getItems = async (req, res) => {
@@ -6,6 +6,19 @@ exports.getItems = async (req, res) => {
         const items = await InventoryItem.findAll({
             where: { companyId: req.user.companyId },
             include: [{ model: Product, as: 'linkedProduct', attributes: ['id', 'name', 'price'] }],
+            attributes: {
+                include: [
+                    [
+                        sequelize.literal(`(
+                            SELECT COALESCE(SUM(ABS("quantityChange")), 0)
+                            FROM "InventoryLedgers" AS ledger
+                            WHERE ledger."inventoryItemId" = "InventoryItem".id
+                            AND ledger.type = 'waste'
+                        )`),
+                        'totalWaste'
+                    ]
+                ]
+            },
             order: [['createdAt', 'DESC']]
         });
         res.json(items);

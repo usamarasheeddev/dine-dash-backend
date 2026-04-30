@@ -370,6 +370,7 @@ exports.payOrder = async (req, res) => {
         const { paymentMethod, discount, finalTotal, status } = req.body;
         const order = await Order.findOne({ 
             where: { id, companyId: req.user.companyId },
+            include: [{ association: 'items', include: ['product'] }],
             transaction
         });
 
