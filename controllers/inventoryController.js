@@ -108,7 +108,7 @@ exports.addStockMovement = async (req, res) => {
         if (type === 'addition') {
             quantityChange = parsedQuantity;
             newStock = previousStock + parsedQuantity;
-        } else if (type === 'deduction') {
+        } else if (type === 'deduction' || type === 'waste') {
             quantityChange = -parsedQuantity;
             newStock = previousStock - parsedQuantity;
             if (newStock < 0) newStock = 0; // Prevent negative stock mathematically if desired

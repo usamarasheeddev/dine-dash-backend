@@ -57,6 +57,15 @@ exports.updateStaff = async (req, res) => {
             if (existingUser) return res.status(400).json({ message: 'Email already exists' });
         }
 
+        if (status && status === 'inactive') {
+            if (staff.id === req.user.id) {
+                return res.status(400).json({ success: false, message: 'You cannot deactivate your own account.' });
+            }
+            if (staff.role === 'admin' && req.user.role !== 'superadmin') {
+                return res.status(400).json({ success: false, message: 'Admin accounts cannot be deactivated.' });
+            }
+        }
+
         staff.username = username || staff.username;
         staff.email = email || staff.email;
         staff.role = role || staff.role;
@@ -85,6 +94,13 @@ exports.deleteStaff = async (req, res) => {
         const { id } = req.params;
         const staff = await User.findOne({ where: { id, companyId: req.user.companyId } });
         if (!staff) return res.status(404).json({ message: 'Staff member not found' });
+
+        if (staff.id === req.user.id) {
+            return res.status(400).json({ success: false, message: 'You cannot delete your own account.' });
+        }
+        if (staff.role === 'admin' && req.user.role !== 'superadmin') {
+            return res.status(400).json({ success: false, message: 'Admin accounts cannot be deleted.' });
+        }
 
         await staff.destroy();
         res.json({ message: 'Staff member removed successfully' });

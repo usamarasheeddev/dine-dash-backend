@@ -29,7 +29,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false
     },
     type: {
-      type: DataTypes.ENUM('addition', 'deduction', 'adjustment'),
+      type: DataTypes.ENUM('addition', 'deduction', 'adjustment', 'waste'),
       allowNull: false
     },
     quantityChange: {
