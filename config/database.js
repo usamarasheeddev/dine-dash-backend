@@ -37,6 +37,7 @@ module.exports = {
       ssl: {
         require: true,
         rejectUnauthorized: false,
+        sslmode: 'verify-full',
       },
     },
   },
