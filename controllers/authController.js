@@ -30,9 +30,9 @@ exports.login = async (req, res) => {
         if (user.role !== 'superadmin' && user.companyId) {
             const company = await Company.findByPk(user.companyId);
             if (!company || company.status !== 'active') {
-                return res.status(403).json({ 
-                    success: false, 
-                    message: `Login blocked: Your company account is ${company ? company.status : 'inactive'}. Please contact support.` 
+                return res.status(403).json({
+                    success: false,
+                    message: `Login blocked: Your company account is ${company ? company.status : 'inactive'}. Please contact support.`
                 });
             }
         }
@@ -144,9 +144,9 @@ exports.getUser = async (req, res) => {
         if (user.role !== 'superadmin' && user.companyId) {
             const company = await Company.findByPk(user.companyId);
             if (!company || company.status !== 'active') {
-                return res.status(403).json({ 
-                    success: false, 
-                    message: `Access blocked: Your company account is ${company ? company.status : 'inactive'}. Please contact support.` 
+                return res.status(403).json({
+                    success: false,
+                    message: `Access blocked: Your company account is ${company ? company.status : 'inactive'}. Please contact support.`
                 });
             }
         }
@@ -197,7 +197,7 @@ exports.forgotPassword = async (req, res) => {
         try {
             await sendEmail({
                 email: user.email,
-                subject: 'Password Reset Request - DineDash POS',
+                subject: 'Password Reset Request - DineDash',
                 html: getForgotPasswordTemplate(resetURL)
             });
 

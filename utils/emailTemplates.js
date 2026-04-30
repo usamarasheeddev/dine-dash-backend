@@ -23,14 +23,14 @@ const baseTemplate = (content) => `
 <body>
     <div class="container">
         <div class="header">
-            <h1>DineDash POS</h1>
+            <h1>DineDash</h1>
         </div>
         <div class="content">
             ${content}
         </div>
         <div class="footer">
-            &copy; 2026 DineDash POS Systems. All rights reserved.<br>
-            If you have any questions, contact us at support@dinedashpos.com
+            &copy; 2026 DineDash Systems. All rights reserved.<br>
+            If you have any questions, contact us at support@DineDash.com
         </div>
     </div>
 </body>

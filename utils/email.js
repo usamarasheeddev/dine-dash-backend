@@ -3,7 +3,7 @@ const nodemailer = require('nodemailer');
 const sendEmail = async (options) => {
     try {
         const isGmail = process.env.SMTP_HOST?.includes('gmail');
-        
+
         const transportConfig = isGmail ? {
             service: 'gmail',
             auth: {

@@ -1,9 +1,9 @@
 const { ServiceRequest, Company, User, SubscriptionPlan, SubscriptionTransaction, sequelize } = require('../models');
 const sendEmail = require('../utils/email');
-const { 
-  getServiceRequestConfirmationTemplate, 
-  getAdminNotificationTemplate, 
-  getServiceApprovalTemplate 
+const {
+    getServiceRequestConfirmationTemplate,
+    getAdminNotificationTemplate,
+    getServiceApprovalTemplate
 } = require('../utils/emailTemplates');
 
 // Submit a new service request
@@ -29,7 +29,7 @@ exports.submitRequest = async (req, res) => {
         try {
             await sendEmail({
                 email: email,
-                subject: 'Request Received - DineDash POS',
+                subject: 'Request Received - DineDash',
                 html: getServiceRequestConfirmationTemplate(companyName)
             });
         } catch (mailError) {
@@ -139,10 +139,10 @@ exports.updateRequestStatus = async (req, res) => {
             emailData = {
                 from: process.env.EMAIL_USER || 'no-reply@martpos.com',
                 to: request.email,
-                subject: 'Account Approved - Mart POS',
+                subject: 'Account Approved - DineDash',
                 html: `
                     <div style="font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-                        <h2 style="color: #4f46e5;">Welcome to Mart POS</h2>
+                        <h2 style="color: #4f46e5;">Welcome to DineDash</h2>
                         <p>Hello,</p>
                         <p>Your service request for <strong>${request.companyName}</strong> has been approved!</p>
                         <p>You can now access your dashboard using the following credentials:</p>
@@ -157,7 +157,7 @@ exports.updateRequestStatus = async (req, res) => {
                         </ul>
                         <p style="color: #ef4444; font-size: 0.9em;"><em>Note: Please change your password immediately after your first login for security.</em></p>
                         <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-                        <p style="font-size: 0.8em; color: #6b7280; text-align: center;">© ${new Date().getFullYear()} Mart POS. All rights reserved.</p>
+                        <p style="font-size: 0.8em; color: #6b7280; text-align: center;">© ${new Date().getFullYear()} DineDash. All rights reserved.</p>
                     </div>
                 `
             };
