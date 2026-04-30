@@ -15,6 +15,15 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Health Check Route
+app.get('/', (req, res) => {
+    res.status(200).json({ 
+        status: 'online', 
+        message: 'DineDash API is running',
+        timestamp: new Date().toISOString()
+    });
+});
+
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/service-requests', require('./routes/serviceRequestRoutes'));
