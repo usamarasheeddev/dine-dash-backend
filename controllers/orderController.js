@@ -368,7 +368,7 @@ exports.payOrder = async (req, res) => {
     try {
         const { id } = req.params;
         const { paymentMethod, discount, finalTotal, status } = req.body;
-        const order = await Order.findOne({ 
+        const order = await Order.findOne({
             where: { id, companyId: req.user.companyId },
             include: [{ association: 'items', include: ['product'] }],
             transaction
@@ -387,13 +387,13 @@ exports.payOrder = async (req, res) => {
         order.paymentMethod = paymentMethod;
         if (discount !== undefined) order.discount = discount;
         if (finalTotal !== undefined) order.finalTotal = finalTotal;
-        order.status = status || 'completed'; 
+        order.status = status || 'completed';
         await order.save({ transaction });
 
         // If it's a credit order, update ledger and customer balance
         if (paymentMethod === 'credit') {
             const amount = parseFloat(order.finalTotal);
-            
+
             await CustomerLedger.create({
                 customerId: order.customerId,
                 companyId: req.user.companyId,
@@ -492,7 +492,7 @@ exports.editOrder = async (req, res) => {
                 const p = await Product.findOne({ where: { name: item.product.name, companyId }, transaction });
                 if (p) productId = p.id;
             }
-            
+
             if (!productId) {
                 // If it's still missing, try to find by 'name' field
                 const p = await Product.findOne({ where: { name: item.name, companyId }, transaction });
