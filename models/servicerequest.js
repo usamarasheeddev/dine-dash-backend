@@ -26,6 +26,10 @@ module.exports = (sequelize, DataTypes) => {
     status: {
       type: DataTypes.ENUM('pending', 'approved', 'rejected'),
       defaultValue: 'pending'
+    },
+    planSlug: {
+      type: DataTypes.STRING,
+      allowNull: true
     }
   }, {
     hooks: {

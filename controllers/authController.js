@@ -65,7 +65,7 @@ exports.login = async (req, res) => {
 exports.register = async (req, res) => {
     try {
         const { ServiceRequest } = require('../models');
-        const { req_name, req_email, req_number, req_company_name, req_address } = req.body;
+        const { req_name, req_email, req_number, req_company_name, req_address, plan_slug } = req.body;
 
         if (!req_email || !req_company_name) {
             return res.status(400).json({ success: false, message: 'Email and Company Name are required' });
@@ -82,7 +82,8 @@ exports.register = async (req, res) => {
             email: req_email,
             password: 'password123', // Default since frontend form lacks password field
             phone: req_number,
-            address: req_address
+            address: req_address,
+            planSlug: plan_slug
         });
 
         res.status(201).json({ success: true, message: 'Registration submitted successfully. Please wait for admin approval.' });
