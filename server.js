@@ -58,11 +58,7 @@ if (process.env.NODE_ENV !== 'production') {
     app.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
     });
-} else {
-    // In production (Vercel), we just authenticate
-    sequelize.authenticate()
-        .then(() => console.log('Database connected (Production)'))
-        .catch(err => console.error('Database connection error:', err));
 }
 
+// Export for Vercel
 module.exports = app;
