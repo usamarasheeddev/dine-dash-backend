@@ -12,6 +12,7 @@ const PORT = process.env.PORT || 5000;
 app.use(cors({
     origin: [
         'https://dine-dash-pos.vercel.app',
+        'https://dine-dash-pos.vercel.app/',
         'http://localhost:5173',
         'http://localhost:5174',
         'http://localhost:5175',
