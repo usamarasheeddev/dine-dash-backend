@@ -321,9 +321,14 @@ exports.createOrder = async (req, res) => {
 
         await transaction.commit();
 
-        // Fetch the created order with items
+        // Fetch the created order with items and product details
         const createdOrder = await Order.findByPk(newOrder.id, {
-            include: ['items'],
+            include: [
+                {
+                    association: 'items',
+                    include: ['product']
+                }
+            ],
         });
 
         res.status(201).json(createdOrder);
