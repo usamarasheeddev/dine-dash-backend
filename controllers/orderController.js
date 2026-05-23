@@ -321,13 +321,15 @@ exports.createOrder = async (req, res) => {
 
         await transaction.commit();
 
-        // Fetch the created order with items and product details
+        // Fetch the created order with items, product details, customer, and table info
         const createdOrder = await Order.findByPk(newOrder.id, {
             include: [
                 {
                     association: 'items',
                     include: ['product']
-                }
+                },
+                'customer',
+                'table'
             ],
         });
 
@@ -403,7 +405,7 @@ exports.payOrder = async (req, res) => {
                 customerId: order.customerId,
                 companyId: req.user.companyId,
                 date: new Date(),
-                type: 'credit',
+                type: 'debit',
                 amount: amount,
                 note: `Credit for POS Order #${order.id}`
             }, { transaction });

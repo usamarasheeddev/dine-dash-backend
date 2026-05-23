@@ -4,6 +4,7 @@ const customerController = require('../controllers/customerController');
 const auth = require('../middleware/authMiddleware');
 
 router.get('/', auth(), customerController.getCustomers);
+router.get('/:id', auth(), customerController.getCustomerById);
 router.post('/', auth(), customerController.addCustomer);
 router.put('/:id', auth(), customerController.updateCustomer);
 router.delete('/:id', auth(), customerController.deleteCustomer);

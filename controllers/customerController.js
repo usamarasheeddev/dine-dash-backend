@@ -1,21 +1,47 @@
 const { Customer, CustomerLedger, Order } = require('../models');
 
-// Get all customers
+// Get all customers (paginated & searchable)
 exports.getCustomers = async (req, res) => {
     try {
-        const customers = await Customer.findAll({
-            where: { companyId: req.user.companyId },
+        const { search } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        const { Op } = require('sequelize');
+        const where = { companyId: req.user.companyId };
+
+        if (search) {
+            const terms = search.trim().split(/\s+/).filter(Boolean);
+            if (terms.length > 0) {
+                const isPostgres = Customer.sequelize.options.dialect === 'postgres';
+                const likeOp = isPostgres ? Op.iLike : Op.like;
+
+                where[Op.and] = terms.map(term => ({
+                    [Op.or]: [
+                        { name: { [likeOp]: `%${term}%` } },
+                        { phone: { [likeOp]: `%${term}%` } },
+                        { address: { [likeOp]: `%${term}%` } }
+                    ]
+                }));
+            }
+        }
+
+        const { count, rows: customers } = await Customer.findAndCountAll({
+            where,
             include: [
                 { model: CustomerLedger, as: 'ledger' },
                 { model: Order, as: 'orders' }
             ],
-            order: [['createdAt', 'DESC']]
+            order: [['createdAt', 'DESC']],
+            limit,
+            offset,
+            distinct: true
         });
 
         // Map to include orders count and balance
         const formatted = customers.map(c => {
             const customerObj = c.toJSON();
-            // Balance is current_balance + initial_balance from the model
             return {
                 id: customerObj.id,
                 name: customerObj.name,
@@ -29,7 +55,15 @@ exports.getCustomers = async (req, res) => {
             };
         });
 
-        res.json(formatted);
+        const totalOutstanding = await Customer.sum('current_balance', { where: { companyId: req.user.companyId } });
+
+        res.json({
+            customers: formatted,
+            totalCount: count,
+            totalPages: Math.ceil(count / limit),
+            currentPage: page,
+            totalOutstanding: Number(totalOutstanding || 0)
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error' });
@@ -86,6 +120,17 @@ exports.deleteCustomer = async (req, res) => {
 
         if (!customer) {
             return res.status(404).json({ message: 'Customer not found' });
+        }
+
+        // Check if customer has outstanding balance
+        if (Number(customer.current_balance || 0) > 0) {
+            return res.status(400).json({ message: 'Cannot delete a customer with a non-zero outstanding balance.' });
+        }
+
+        // Check if customer has active ledger entries
+        const ledgerCount = await CustomerLedger.count({ where: { customerId: id, companyId: req.user.companyId } });
+        if (ledgerCount > 0) {
+            return res.status(400).json({ message: 'Cannot delete a customer with ledger history.' });
         }
 
         await customer.destroy();
@@ -145,5 +190,39 @@ exports.addLedgerEntry = async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error adding ledger entry' });
+    }
+};
+
+// Get a single customer by ID
+exports.getCustomerById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const customer = await Customer.findOne({
+            where: { id, companyId: req.user.companyId },
+            include: [
+                { model: CustomerLedger, as: 'ledger' },
+                { model: Order, as: 'orders' }
+            ]
+        });
+
+        if (!customer) {
+            return res.status(404).json({ message: 'Customer not found' });
+        }
+
+        const customerObj = customer.toJSON();
+        res.json({
+            id: customerObj.id,
+            name: customerObj.name,
+            phone: customerObj.phone,
+            email: customerObj.email || '',
+            address: customerObj.address,
+            balance: Number(customerObj.current_balance || 0),
+            orders: customerObj.orders ? customerObj.orders.length : 0,
+            ledger: customerObj.ledger || [],
+            createdAt: customerObj.createdAt
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
     }
 };
