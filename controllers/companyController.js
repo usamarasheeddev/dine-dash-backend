@@ -192,7 +192,8 @@ exports.updateMySettings = async (req, res) => {
             'name', 'address', 'phone', 'phone2',
             'currency', 'timezone', 'taxRate',
             'receiptHeader', 'receiptFooter',
-            'orderTypes', 'kitchenEnabled'
+            'orderTypes', 'kitchenEnabled',
+            'silentPrintingEnabled', 'selectedPrinter'
         ];
 
         const updates = {};

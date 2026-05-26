@@ -60,6 +60,14 @@ module.exports = (sequelize, DataTypes) => {
     kitchenEnabled: {
       type: DataTypes.BOOLEAN,
       defaultValue: false
+    },
+    silentPrintingEnabled: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
+    },
+    selectedPrinter: {
+      type: DataTypes.STRING,
+      defaultValue: ''
     }
   }, {
     sequelize,
