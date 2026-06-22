@@ -150,8 +150,8 @@ exports.getDashboardStats = async (req, res) => {
             // Last 24 hours, grouped by hour
             const last24Hrs = new Date(new Date().getTime() - 24 * 60 * 60 * 1000);
 
-            // Note: PostgreSQL DATE_TRUNC shifted by company timezone
-            const timeExpr = sequelize.fn('date_trunc', 'hour', sequelize.literal(`"Order"."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE '${tz}'`));
+            // Truncate by hour. We can just use UTC hours and then format them in the company timezone
+            const timeExpr = sequelize.fn('date_trunc', 'hour', sequelize.col('createdAt'));
             const graphQuery = await Order.findAll({
                 attributes: [
                     [timeExpr, 'time'],
@@ -171,16 +171,18 @@ exports.getDashboardStats = async (req, res) => {
             // Fill missing hours
             const hoursMap = {};
             graphQuery.forEach(g => {
-                const dateKey = new Date(g.time);
-                // format as e.g., 2 PM
-                const label = dateKey.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
-                hoursMap[label] = { revenue: Number(g.revenue), credit: Number(g.credit) };
+                // g.time is a Date object representing the UTC hour
+                const label = formatInTimeZone(new Date(g.time), tz, 'h a');
+                // Merge revenues if multiple UTC hours fall into the same local label (e.g. 30min offset timezones)
+                if (!hoursMap[label]) hoursMap[label] = { revenue: 0, credit: 0 };
+                hoursMap[label].revenue += Number(g.revenue);
+                hoursMap[label].credit += Number(g.credit);
             });
 
+            const nowUTC = new Date();
             for (let i = 23; i >= 0; i--) {
-                const d = new Date();
-                d.setHours(d.getHours() - i);
-                const label = d.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+                const d = new Date(nowUTC.getTime() - i * 60 * 60 * 1000);
+                const label = formatInTimeZone(d, tz, 'h a');
                 if (!graphData.find(x => x.day === label)) {
                     graphData.push({ 
                         day: label, 

@@ -44,6 +44,7 @@ app.use('/api/orders', require('./routes/orderRoutes'));
 app.use('/api/ledgers', require('./routes/ledgerRoutes'));
 app.use('/api/companies', require('./routes/companyRoutes'));
 app.use('/api/inventory', require('./routes/inventoryRoutes'));
+app.use('/api/recipes', require('./routes/recipeRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/subscription-plans', require('./routes/subscriptionPlanRoutes'));

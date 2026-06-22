@@ -1,11 +1,85 @@
-const { InventoryItem, InventoryLedger, User, Product, sequelize } = require('../models');
+const { InventoryItem, InventoryLedger, InventoryCategory, User, Product, sequelize } = require('../models');
 
-// Get all inventory items
+// Categories Controllers
+exports.getCategories = async (req, res) => {
+    try {
+        const categories = await InventoryCategory.findAll({
+            where: { companyId: req.user.companyId },
+            order: [['name', 'ASC']]
+        });
+        res.json(categories);
+    } catch (error) {
+        console.error('Error fetching inventory categories:', error);
+        res.status(500).json({ message: 'Server error fetching inventory categories' });
+    }
+};
+
+exports.addCategory = async (req, res) => {
+    try {
+        const { name } = req.body;
+        if (!name) {
+            return res.status(400).json({ message: 'Name is required' });
+        }
+        const category = await InventoryCategory.create({
+            companyId: req.user.companyId,
+            name
+        });
+        res.status(201).json(category);
+    } catch (error) {
+        console.error('Error adding inventory category:', error);
+        res.status(500).json({ message: 'Server error adding inventory category' });
+    }
+};
+
+exports.updateCategory = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name } = req.body;
+        const category = await InventoryCategory.findOne({ where: { id, companyId: req.user.companyId } });
+        if (!category) {
+            return res.status(404).json({ message: 'Category not found' });
+        }
+        category.name = name;
+        await category.save();
+        res.json(category);
+    } catch (error) {
+        console.error('Error updating inventory category:', error);
+        res.status(500).json({ message: 'Server error updating inventory category' });
+    }
+};
+
+exports.deleteCategory = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const category = await InventoryCategory.findOne({ where: { id, companyId: req.user.companyId } });
+        if (!category) {
+            return res.status(404).json({ message: 'Category not found' });
+        }
+        // Unlink or nullify items referencing this category
+        await InventoryItem.update({ categoryId: null }, { where: { categoryId: id } });
+        await category.destroy();
+        res.json({ message: 'Category deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting inventory category:', error);
+        res.status(500).json({ message: 'Server error deleting inventory category' });
+    }
+};
+
+// Get all inventory items (optional filter by type)
 exports.getItems = async (req, res) => {
     try {
+        const { type } = req.query; // 'simple' | 'ingredient'
+        const whereClause = { companyId: req.user.companyId };
+        if (type) {
+            whereClause.type = type;
+        }
+
         const items = await InventoryItem.findAll({
-            where: { companyId: req.user.companyId },
-            include: [{ model: Product, as: 'linkedProduct', attributes: ['id', 'name', 'price'] }],
+            where: whereClause,
+            include: [
+                { model: Product, as: 'linkedProduct', attributes: ['id', 'name', 'price'] },
+                { model: InventoryCategory, as: 'category', attributes: ['id', 'name'] }
+            ],
             attributes: {
                 include: [
                     [
@@ -31,12 +105,13 @@ exports.getItems = async (req, res) => {
 // Add a new inventory item
 exports.addItem = async (req, res) => {
     try {
-        const { name, category, unit, quantity, minStock, costPerUnit, supplier, productId } = req.body;
+        const { name, categoryId, type, unit, quantity, minStock, costPerUnit, supplier, productId } = req.body;
 
         const item = await InventoryItem.create({
             companyId: req.user.companyId,
             name,
-            category: category || '',
+            categoryId: categoryId || null,
+            type: type || 'simple',
             unit: unit || 'piece',
             quantity: quantity || 0,
             minStock: minStock || 0,
@@ -45,7 +120,16 @@ exports.addItem = async (req, res) => {
             productId: productId || null
         });
 
-        res.status(201).json(item);
+        // Load category and linkedProduct associations to match getItems output
+        const responseItem = await InventoryItem.findOne({
+            where: { id: item.id },
+            include: [
+                { model: Product, as: 'linkedProduct', attributes: ['id', 'name', 'price'] },
+                { model: InventoryCategory, as: 'category', attributes: ['id', 'name'] }
+            ]
+        });
+
+        res.status(201).json(responseItem);
     } catch (error) {
         console.error('Error adding inventory item:', error);
         res.status(500).json({ message: 'Server error adding inventory item' });
@@ -56,7 +140,7 @@ exports.addItem = async (req, res) => {
 exports.updateItem = async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, category, unit, quantity, minStock, costPerUnit, supplier, productId } = req.body;
+        const { name, categoryId, type, unit, quantity, minStock, costPerUnit, supplier, productId } = req.body;
 
         const item = await InventoryItem.findOne({ where: { id, companyId: req.user.companyId } });
         if (!item) {
@@ -64,7 +148,8 @@ exports.updateItem = async (req, res) => {
         }
 
         item.name = name;
-        item.category = category || '';
+        item.categoryId = categoryId !== undefined ? (categoryId || null) : item.categoryId;
+        item.type = type || item.type;
         item.unit = unit || 'piece';
         item.quantity = quantity !== undefined ? quantity : item.quantity;
         item.minStock = minStock !== undefined ? minStock : item.minStock;
@@ -73,7 +158,16 @@ exports.updateItem = async (req, res) => {
         item.productId = productId !== undefined ? (productId || null) : item.productId;
 
         await item.save();
-        res.json(item);
+
+        const responseItem = await InventoryItem.findOne({
+            where: { id: item.id },
+            include: [
+                { model: Product, as: 'linkedProduct', attributes: ['id', 'name', 'price'] },
+                { model: InventoryCategory, as: 'category', attributes: ['id', 'name'] }
+            ]
+        });
+
+        res.json(responseItem);
     } catch (error) {
         console.error('Error updating inventory item:', error);
         res.status(500).json({ message: 'Server error updating inventory item' });
@@ -98,11 +192,11 @@ exports.deleteItem = async (req, res) => {
     }
 };
 
-// Add a stock movement (addition/deduction)
+// Add a stock movement (addition/deduction/waste/adjustment)
 exports.addStockMovement = async (req, res) => {
     try {
         const { id } = req.params;
-        const { type, quantity, note } = req.body; // type: 'addition', 'deduction', 'adjustment'
+        const { type, quantity, note } = req.body; // type: 'addition', 'deduction', 'adjustment', 'waste'
 
         const item = await InventoryItem.findOne({ where: { id, companyId: req.user.companyId } });
         if (!item) {
@@ -126,9 +220,6 @@ exports.addStockMovement = async (req, res) => {
             newStock = previousStock - parsedQuantity;
             if (newStock < 0) newStock = 0; // Prevent negative stock mathematically if desired
         } else if (type === 'adjustment') {
-            // For strict set adjustments, the 'quantity' might be the exact new value
-            // If so, the change is newStock - previousStock.
-            // Here we assume quantity is the exact new stock level they want to 'adjust' to.
             newStock = parsedQuantity;
             quantityChange = newStock - previousStock;
         } else {

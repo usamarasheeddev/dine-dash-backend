@@ -15,6 +15,7 @@ module.exports = (sequelize, DataTypes) => {
       Product.belongsTo(models.ProductCategory, { foreignKey: 'categoryId', as: 'category' });
       Product.belongsTo(models.InventoryItem, { foreignKey: 'inventoryItemId', as: 'linkedInventory' });
       Product.hasMany(models.OrderItem, { foreignKey: 'productId', as: 'orderItems' });
+      Product.hasMany(models.RecipeItem, { foreignKey: 'productId', as: 'recipeItems' });
     }
   }
   Product.init({

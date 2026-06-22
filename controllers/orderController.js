@@ -1,4 +1,4 @@
-const { Order, OrderItem, Product, Customer, CustomerLedger, InventoryItem, InventoryLedger, Table, Company, sequelize } = require('../models');
+const { Order, OrderItem, Product, Customer, CustomerLedger, InventoryItem, InventoryLedger, Table, Company, RecipeItem, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { startOfDay, endOfDay } = require('date-fns');
 const { toZonedTime, fromZonedTime } = require('date-fns-tz');
@@ -193,13 +193,24 @@ exports.getReport = async (req, res) => {
 // Get all orders (paginated)
 exports.getOrders = async (req, res) => {
     try {
-        const { search, status } = req.query;
+        const { search, status, orderType, startDate, endDate } = req.query;
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
+        const limit = parseInt(req.query.limit) || 20;
         const offset = (page - 1) * limit;
 
         const where = { companyId: req.user.companyId };
-        if (status) where.status = status;
+        if (status && status !== 'all') where.status = status;
+        if (orderType && orderType !== 'all') where.orderType = orderType;
+
+        if (startDate && endDate) {
+            const company = await Company.findByPk(req.user.companyId);
+            const tz = company?.timezone || 'UTC';
+            const start = fromZonedTime(startOfDay(toZonedTime(new Date(startDate), tz)), tz);
+            const end = fromZonedTime(endOfDay(toZonedTime(new Date(endDate), tz)), tz);
+            where.createdAt = {
+                [Op.between]: [start, end]
+            };
+        }
 
         const include = [
             {
@@ -279,29 +290,64 @@ exports.createOrder = async (req, res) => {
                     product.stock_quantity -= item.quantity;
                     await product.save({ transaction });
 
-                    // Auto-deduct inventory: look up InventoryItem linked to this Product
-                    const invItem = await InventoryItem.findOne({
+                    // Recipe-based ingredient deduction
+                    const recipeItems = await RecipeItem.findAll({
                         where: { productId: product.id, companyId: req.user.companyId },
                         transaction
                     });
-                    if (invItem) {
-                        const deductAmount = item.quantity;
-                        const previousStock = parseFloat(invItem.quantity || 0);
-                        const newStock = previousStock - deductAmount;
 
-                        invItem.quantity = newStock;
-                        await invItem.save({ transaction });
+                    if (recipeItems && recipeItems.length > 0) {
+                        for (const recipeItem of recipeItems) {
+                            const deductAmount = parseFloat(recipeItem.quantity) * parseFloat(item.quantity);
+                            const ingredient = await InventoryItem.findOne({
+                                where: { id: recipeItem.inventoryItemId, companyId: req.user.companyId },
+                                transaction
+                            });
+                            if (ingredient) {
+                                const previousStock = parseFloat(ingredient.quantity || 0);
+                                const newStock = Math.max(0, previousStock - deductAmount);
 
-                        await InventoryLedger.create({
-                            inventoryItemId: invItem.id,
-                            companyId: req.user.companyId,
-                            userId: req.user.id,
-                            type: 'deduction',
-                            quantityChange: -deductAmount,
-                            previousStock,
-                            newStock,
-                            note: `Auto-deducted for POS Order (Product: ${product.name})`
-                        }, { transaction });
+                                ingredient.quantity = newStock;
+                                await ingredient.save({ transaction });
+
+                                await InventoryLedger.create({
+                                    companyId: req.user.companyId,
+                                    inventoryItemId: ingredient.id,
+                                    userId: req.user.id,
+                                    orderId: newOrder.id,
+                                    type: 'sale',
+                                    quantityChange: -deductAmount,
+                                    previousStock,
+                                    newStock,
+                                    note: `Auto-deducted for POS Order #${newOrder.id} (Product: ${product.name})`
+                                }, { transaction });
+                            }
+                        }
+                    } else {
+                        // Fallback: Auto-deduct legacy inventory
+                        const invItem = await InventoryItem.findOne({
+                            where: { productId: product.id, companyId: req.user.companyId },
+                            transaction
+                        });
+                        if (invItem) {
+                            const deductAmount = item.quantity;
+                            const previousStock = parseFloat(invItem.quantity || 0);
+                            const newStock = previousStock - deductAmount;
+
+                            invItem.quantity = newStock;
+                            await invItem.save({ transaction });
+
+                            await InventoryLedger.create({
+                                inventoryItemId: invItem.id,
+                                companyId: req.user.companyId,
+                                userId: req.user.id,
+                                type: 'deduction',
+                                quantityChange: -deductAmount,
+                                previousStock,
+                                newStock,
+                                note: `Auto-deducted for POS Order (Product: ${product.name})`
+                            }, { transaction });
+                        }
                     }
                 }
             }
@@ -464,26 +510,62 @@ exports.editOrder = async (req, res) => {
                 product.stock_quantity += parseFloat(oldItem.quantity);
                 await product.save({ transaction });
 
-                const invItem = await InventoryItem.findOne({
+                // Recipe-based ingredient revert
+                const recipeItems = await RecipeItem.findAll({
                     where: { productId: product.id, companyId },
                     transaction
                 });
-                if (invItem) {
-                    const previousStock = parseFloat(invItem.quantity || 0);
-                    const newStock = previousStock + parseFloat(oldItem.quantity);
-                    invItem.quantity = newStock;
-                    await invItem.save({ transaction });
 
-                    await InventoryLedger.create({
-                        inventoryItemId: invItem.id,
-                        companyId,
-                        userId: req.user.id,
-                        type: 'adjustment',
-                        quantityChange: parseFloat(oldItem.quantity),
-                        previousStock,
-                        newStock,
-                        note: `Reverted for Order Edit (Order #${order.id})`
-                    }, { transaction });
+                if (recipeItems && recipeItems.length > 0) {
+                    for (const recipeItem of recipeItems) {
+                        const revertAmount = parseFloat(recipeItem.quantity) * parseFloat(oldItem.quantity);
+                        const ingredient = await InventoryItem.findOne({
+                            where: { id: recipeItem.inventoryItemId, companyId },
+                            transaction
+                        });
+                        if (ingredient) {
+                            const previousStock = parseFloat(ingredient.quantity || 0);
+                            const newStock = previousStock + revertAmount;
+
+                            ingredient.quantity = newStock;
+                            await ingredient.save({ transaction });
+
+                            await InventoryLedger.create({
+                                companyId,
+                                inventoryItemId: ingredient.id,
+                                userId: req.user.id,
+                                orderId: order.id,
+                                type: 'adjustment',
+                                quantityChange: revertAmount,
+                                previousStock,
+                                newStock,
+                                note: `Reverted for Order Edit (Order #${order.id})`
+                            }, { transaction });
+                        }
+                    }
+                } else {
+                    // Fallback legacy inventory item revert
+                    const invItem = await InventoryItem.findOne({
+                        where: { productId: product.id, companyId },
+                        transaction
+                    });
+                    if (invItem) {
+                        const previousStock = parseFloat(invItem.quantity || 0);
+                        const newStock = previousStock + parseFloat(oldItem.quantity);
+                        invItem.quantity = newStock;
+                        await invItem.save({ transaction });
+
+                        await InventoryLedger.create({
+                            inventoryItemId: invItem.id,
+                            companyId,
+                            userId: req.user.id,
+                            type: 'adjustment',
+                            quantityChange: parseFloat(oldItem.quantity),
+                            previousStock,
+                            newStock,
+                            note: `Reverted for Order Edit (Order #${order.id})`
+                        }, { transaction });
+                    }
                 }
             }
         }
@@ -506,12 +588,14 @@ exports.editOrder = async (req, res) => {
                 if (p) productId = p.id;
             }
 
+            const itemQty = item.qty || item.quantity;
+
             await OrderItem.create({
                 orderId: order.id,
                 productId: productId,
-                quantity: item.qty || item.quantity,
+                quantity: itemQty,
                 price: item.price,
-                total: (item.qty || item.quantity) * item.price,
+                total: itemQty * item.price,
                 variations: item.variations,
                 addons: item.addons
             }, { transaction });
@@ -519,31 +603,67 @@ exports.editOrder = async (req, res) => {
             if (productId) {
                 const product = await Product.findByPk(productId, { transaction });
                 if (product) {
-                    product.stock_quantity -= parseFloat(item.qty || item.quantity);
+                    product.stock_quantity -= parseFloat(itemQty);
                     await product.save({ transaction });
 
-                    const invItem = await InventoryItem.findOne({
+                    // Recipe-based ingredient deduction
+                    const recipeItems = await RecipeItem.findAll({
                         where: { productId: product.id, companyId },
                         transaction
                     });
-                    if (invItem) {
-                        const deductAmount = parseFloat(item.qty || item.quantity);
-                        const previousStock = parseFloat(invItem.quantity || 0);
-                        const newStock = previousStock - deductAmount;
 
-                        invItem.quantity = newStock;
-                        await invItem.save({ transaction });
+                    if (recipeItems && recipeItems.length > 0) {
+                        for (const recipeItem of recipeItems) {
+                            const deductAmount = parseFloat(recipeItem.quantity) * parseFloat(itemQty);
+                            const ingredient = await InventoryItem.findOne({
+                                where: { id: recipeItem.inventoryItemId, companyId },
+                                transaction
+                            });
+                            if (ingredient) {
+                                const previousStock = parseFloat(ingredient.quantity || 0);
+                                const newStock = Math.max(0, previousStock - deductAmount);
 
-                        await InventoryLedger.create({
-                            inventoryItemId: invItem.id,
-                            companyId,
-                            userId: req.user.id,
-                            type: 'deduction',
-                            quantityChange: -deductAmount,
-                            previousStock,
-                            newStock,
-                            note: `Deducted for Order Edit (Order #${order.id})`
-                        }, { transaction });
+                                ingredient.quantity = newStock;
+                                await ingredient.save({ transaction });
+
+                                await InventoryLedger.create({
+                                    companyId,
+                                    inventoryItemId: ingredient.id,
+                                    userId: req.user.id,
+                                    orderId: order.id,
+                                    type: 'sale',
+                                    quantityChange: -deductAmount,
+                                    previousStock,
+                                    newStock,
+                                    note: `Auto-deducted for Order Edit (Order #${order.id})`
+                                }, { transaction });
+                            }
+                        }
+                    } else {
+                        // Fallback legacy inventory item deduction
+                        const invItem = await InventoryItem.findOne({
+                            where: { productId: product.id, companyId },
+                            transaction
+                        });
+                        if (invItem) {
+                            const deductAmount = parseFloat(itemQty);
+                            const previousStock = parseFloat(invItem.quantity || 0);
+                            const newStock = previousStock - deductAmount;
+
+                            invItem.quantity = newStock;
+                            await invItem.save({ transaction });
+
+                            await InventoryLedger.create({
+                                inventoryItemId: invItem.id,
+                                companyId,
+                                userId: req.user.id,
+                                type: 'deduction',
+                                quantityChange: -deductAmount,
+                                previousStock,
+                                newStock,
+                                note: `Deducted for Order Edit (Order #${order.id})`
+                            }, { transaction });
+                        }
                     }
                 }
             }

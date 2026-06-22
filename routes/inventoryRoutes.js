@@ -3,6 +3,13 @@ const router = express.Router();
 const inventoryController = require('../controllers/inventoryController');
 const auth = require('../middleware/authMiddleware');
 
+// Categories CRUD
+router.get('/categories', auth(), inventoryController.getCategories);
+router.post('/categories', auth(), inventoryController.addCategory);
+router.put('/categories/:id', auth(), inventoryController.updateCategory);
+router.delete('/categories/:id', auth(), inventoryController.deleteCategory);
+
+// Items CRUD
 router.get('/', auth(), inventoryController.getItems);
 router.post('/', auth(), inventoryController.addItem);
 router.put('/:id', auth(), inventoryController.updateItem);
