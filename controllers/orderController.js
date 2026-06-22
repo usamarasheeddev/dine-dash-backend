@@ -298,6 +298,35 @@ exports.createOrder = async (req, res) => {
 
                     if (recipeItems && recipeItems.length > 0) {
                         for (const recipeItem of recipeItems) {
+                            if (recipeItem.variationName) {
+                                const variations = Array.isArray(item.variations) ? item.variations : [];
+                                const hasVariation = variations.some(v => {
+                                    const recipeVar = recipeItem.variationName.trim().toLowerCase();
+                                    if (recipeVar.includes(':')) {
+                                        const parts = recipeVar.split(':');
+                                        const vName = parts[0].trim();
+                                        const oLabel = parts[1].trim();
+                                        return v && typeof v === 'object' && 
+                                               v.variationName?.trim().toLowerCase() === vName && 
+                                               v.optionLabel?.trim().toLowerCase() === oLabel;
+                                    } else {
+                                        return (v && typeof v === 'object' && 
+                                                 (v.optionLabel?.trim().toLowerCase() === recipeVar || 
+                                                  v.variationName?.trim().toLowerCase() === recipeVar)) ||
+                                               (typeof v === 'string' && v.trim().toLowerCase() === recipeVar);
+                                    }
+                                });
+                                if (!hasVariation) continue;
+                            }
+                            if (recipeItem.addonName) {
+                                const addons = Array.isArray(item.addons) ? item.addons : [];
+                                const hasAddon = addons.some(a => 
+                                    (a && typeof a === 'object' && a.name === recipeItem.addonName) ||
+                                    (typeof a === 'string' && a === recipeItem.addonName)
+                                );
+                                if (!hasAddon) continue;
+                            }
+
                             const deductAmount = parseFloat(recipeItem.quantity) * parseFloat(item.quantity);
                             const ingredient = await InventoryItem.findOne({
                                 where: { id: recipeItem.inventoryItemId, companyId: req.user.companyId },

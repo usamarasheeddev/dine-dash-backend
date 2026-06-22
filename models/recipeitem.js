@@ -25,6 +25,14 @@ module.exports = (sequelize, DataTypes) => {
     quantity: {
       type: DataTypes.DECIMAL(12, 4),
       allowNull: false
+    },
+    variationName: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    addonName: {
+      type: DataTypes.STRING,
+      allowNull: true
     }
   }, {
     sequelize,
