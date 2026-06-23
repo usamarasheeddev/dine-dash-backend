@@ -48,6 +48,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DECIMAL(12, 4),
       allowNull: false
     },
+    purchaseCost: {
+      type: DataTypes.DECIMAL,
+      defaultValue: 0
+    },
     note: DataTypes.STRING
   }, {
     sequelize,

@@ -1,4 +1,4 @@
-const { Order, OrderItem, Product, InventoryItem, Company, sequelize } = require('../models');
+const { Order, OrderItem, Product, InventoryItem, InventoryLedger, Company, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { formatInTimeZone, toZonedTime, fromZonedTime } = require('date-fns-tz');
 const { startOfDay, endOfDay } = require('date-fns');
@@ -306,5 +306,186 @@ exports.getDashboardStats = async (req, res) => {
     } catch (error) {
         console.error("Dashboard Stats Error:", error);
         res.status(500).json({ message: 'Server error retrieving dashboard stats' });
+    }
+};
+
+exports.getFinanceSummary = async (req, res) => {
+    try {
+        const companyId = req.user.companyId;
+        const { startDate, endDate } = req.query;
+
+        const company = await Company.findByPk(companyId);
+        const tz = company?.timezone || 'UTC';
+
+        const start = startDate ? fromZonedTime(startOfDay(toZonedTime(new Date(startDate), tz)), tz) : new Date(0);
+        const end = endDate ? fromZonedTime(endOfDay(toZonedTime(new Date(endDate), tz)), tz) : new Date();
+
+        const dateFilter = {
+            companyId,
+            createdAt: {
+                [Op.between]: [start, end]
+            }
+        };
+
+        // 1. Fetch completed orders in date range
+        const orders = await Order.findAll({
+            where: { ...dateFilter, status: 'completed' },
+            include: [
+                {
+                    association: 'items',
+                    include: ['product']
+                }
+            ]
+        });
+
+        // 2. Fetch inventory additions in date range
+        const inventoryAdditions = await InventoryLedger.findAll({
+            where: {
+                companyId,
+                type: 'addition',
+                createdAt: { [Op.between]: [start, end] }
+            },
+            include: [{ association: 'item', attributes: ['name', 'unit'] }]
+        });
+
+        // 3. Fetch waste cost in date range
+        const wasteLedgers = await InventoryLedger.findAll({
+            where: {
+                companyId,
+                type: 'waste',
+                createdAt: { [Op.between]: [start, end] }
+            },
+            include: [{ association: 'item', attributes: ['name', 'costPerUnit'] }]
+        });
+
+        const { Expense } = require('../models');
+        // 4. Fetch manual expenses
+        const manualExpenses = await Expense.findAll({
+            where: {
+                companyId,
+                expenseDate: { [Op.between]: [start, end] }
+            },
+            include: [{ association: 'user', attributes: ['fullName'] }]
+        });
+
+        let totalRevenue = 0;
+        let totalCOGS = 0;
+        let totalInventoryExpenses = 0;
+        let totalWasteCost = 0;
+        let totalManualExpenses = 0;
+
+        const productMap = {};
+        const revenueByDayMap = {};
+
+        const isDaily = Math.abs(end - start) <= 24 * 60 * 60 * 1000;
+        const dateFormat = isDaily ? "h a" : "MMM dd";
+
+        if (isDaily) {
+            const dayStart = new Date(start);
+            for (let i = 0; i < 24; i++) {
+                const hourTime = new Date(dayStart.getTime() + i * 60 * 60 * 1000);
+                const label = formatInTimeZone(hourTime, tz, "h a");
+                revenueByDayMap[label] = { day: label, revenue: 0, cogs: 0, expenses: 0, _time: hourTime.getTime() };
+            }
+        }
+
+        // Aggregate orders (Revenue & COGS)
+        orders.forEach(o => {
+            const revenue = parseFloat(o.finalTotal || o.total || 0);
+            totalRevenue += revenue;
+            
+            const dayKey = formatInTimeZone(new Date(o.createdAt), tz, dateFormat);
+            if (!revenueByDayMap[dayKey]) revenueByDayMap[dayKey] = { day: dayKey, revenue: 0, cogs: 0, expenses: 0, _time: new Date(o.createdAt).getTime() };
+            revenueByDayMap[dayKey].revenue += revenue;
+
+            o.items.forEach(i => {
+                const name = i.product ? i.product.name : 'Unknown Product';
+                const qty = parseFloat(i.quantity || 0);
+                const itemRev = parseFloat(i.total || 0);
+                const itemCogs = parseFloat(i.costPrice || 0) * qty;
+
+                totalCOGS += itemCogs;
+                revenueByDayMap[dayKey].cogs += itemCogs;
+
+                if (!productMap[name]) productMap[name] = { name, revenue: 0, cogs: 0, qty: 0 };
+                productMap[name].revenue += itemRev;
+                productMap[name].cogs += itemCogs;
+                productMap[name].qty += qty;
+            });
+        });
+
+        // Aggregate Inventory Purchases
+        const inventoryExpensesList = [];
+        inventoryAdditions.forEach(l => {
+            const cost = parseFloat(l.purchaseCost || 0);
+            totalInventoryExpenses += cost;
+            
+            const dayKey = formatInTimeZone(new Date(l.createdAt), tz, dateFormat);
+            if (!revenueByDayMap[dayKey]) revenueByDayMap[dayKey] = { day: dayKey, revenue: 0, cogs: 0, expenses: 0, _time: new Date(l.createdAt).getTime() };
+            revenueByDayMap[dayKey].expenses += cost;
+
+            inventoryExpensesList.push({
+                date: l.createdAt,
+                itemName: l.item ? l.item.name : 'Unknown',
+                qty: parseFloat(l.quantityChange || 0),
+                unit: l.item ? l.item.unit : '',
+                purchaseCost: cost,
+                type: 'addition'
+            });
+        });
+
+        // Aggregate Waste
+        wasteLedgers.forEach(w => {
+            const qty = Math.abs(parseFloat(w.quantityChange || 0));
+            const unitCost = w.item ? parseFloat(w.item.costPerUnit || 0) : 0;
+            totalWasteCost += (qty * unitCost);
+        });
+
+        // Aggregate Manual Expenses
+        manualExpenses.forEach(e => {
+            const cost = parseFloat(e.amount || 0);
+            totalManualExpenses += cost;
+            
+            const dayKey = formatInTimeZone(new Date(e.expenseDate), tz, dateFormat);
+            if (!revenueByDayMap[dayKey]) revenueByDayMap[dayKey] = { day: dayKey, revenue: 0, cogs: 0, expenses: 0, _time: new Date(e.expenseDate).getTime() };
+            revenueByDayMap[dayKey].expenses += cost;
+        });
+
+        const grossProfit = totalRevenue - totalCOGS;
+        const netProfit = grossProfit - totalWasteCost - totalManualExpenses;
+
+        // Format product profits
+        const productProfits = Object.values(productMap).map(p => {
+            const profit = p.revenue - p.cogs;
+            const margin = p.revenue > 0 ? (profit / p.revenue) * 100 : 0;
+            return {
+                ...p,
+                profit,
+                margin
+            };
+        }).sort((a, b) => b.profit - a.profit);
+
+        const revenueByDay = Object.values(revenueByDayMap).sort((a,b) => (a._time || 0) - (b._time || 0));
+
+        res.json({
+            summary: {
+                totalRevenue,
+                totalCOGS,
+                grossProfit,
+                grossMargin: totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0,
+                totalInventoryExpenses,
+                totalWasteCost,
+                totalManualExpenses,
+                netProfit
+            },
+            revenueByDay,
+            productProfits,
+            inventoryExpenses: inventoryExpensesList.sort((a, b) => new Date(b.date) - new Date(a.date)),
+            manualExpenses
+        });
+        
+    } catch (error) {
+        console.error("Finance Summary Error:", error);
+        res.status(500).json({ message: 'Server error retrieving finance stats' });
     }
 };

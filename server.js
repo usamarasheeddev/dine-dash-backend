@@ -48,6 +48,7 @@ app.use('/api/recipes', require('./routes/recipeRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/subscription-plans', require('./routes/subscriptionPlanRoutes'));
+app.use('/api/expenses', require('./routes/expenseRoutes'));
 
 
 // Database Connection and Server Start

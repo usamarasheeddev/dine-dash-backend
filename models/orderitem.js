@@ -20,6 +20,10 @@ module.exports = (sequelize, DataTypes) => {
     productId: DataTypes.INTEGER,
     quantity: DataTypes.INTEGER,
     price: DataTypes.DECIMAL,
+    costPrice: {
+      type: DataTypes.DECIMAL,
+      defaultValue: 0
+    },
     total: DataTypes.DECIMAL,
     variations: DataTypes.JSONB,
     addons: DataTypes.JSONB

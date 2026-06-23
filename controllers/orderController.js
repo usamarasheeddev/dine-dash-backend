@@ -274,11 +274,26 @@ exports.createOrder = async (req, res) => {
 
         if (items && items.length > 0) {
             for (const item of items) {
+                let itemCostPrice = 0;
+                const recipeItemsForCost = await RecipeItem.findAll({
+                    where: { productId: item.productId, companyId: req.user.companyId },
+                    transaction
+                });
+                for (const ri of recipeItemsForCost) {
+                    // Check variations/addons if needed to be perfectly accurate,
+                    // but base recipe cost is enough for now per the simple plan.
+                    const invItem = await InventoryItem.findByPk(ri.inventoryItemId, { transaction });
+                    if (invItem) {
+                        itemCostPrice += parseFloat(invItem.costPerUnit || 0) * parseFloat(ri.quantity || 0);
+                    }
+                }
+
                 await OrderItem.create({
                     orderId: newOrder.id,
                     productId: item.productId,
                     quantity: item.quantity,
                     price: item.price,
+                    costPrice: itemCostPrice,
                     total: item.total,
                     variations: item.variations,
                     addons: item.addons
@@ -618,12 +633,26 @@ exports.editOrder = async (req, res) => {
             }
 
             const itemQty = item.qty || item.quantity;
+            let itemCostPrice = 0;
+            if (productId) {
+                const recipeItemsForCost = await RecipeItem.findAll({
+                    where: { productId, companyId },
+                    transaction
+                });
+                for (const ri of recipeItemsForCost) {
+                    const invItem = await InventoryItem.findByPk(ri.inventoryItemId, { transaction });
+                    if (invItem) {
+                        itemCostPrice += parseFloat(invItem.costPerUnit || 0) * parseFloat(ri.quantity || 0);
+                    }
+                }
+            }
 
             await OrderItem.create({
                 orderId: order.id,
                 productId: productId,
                 quantity: itemQty,
                 price: item.price,
+                costPrice: itemCostPrice,
                 total: itemQty * item.price,
                 variations: item.variations,
                 addons: item.addons

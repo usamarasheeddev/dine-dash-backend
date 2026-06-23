@@ -120,6 +120,21 @@ exports.addItem = async (req, res) => {
             productId: productId || null
         });
 
+        // If initial quantity is greater than 0, create a ledger addition to track the purchase expense
+        if (item.quantity > 0) {
+            await InventoryLedger.create({
+                inventoryItemId: item.id,
+                companyId: req.user.companyId,
+                userId: req.user.id,
+                type: 'addition',
+                quantityChange: item.quantity,
+                previousStock: 0,
+                newStock: item.quantity,
+                purchaseCost: item.quantity * item.costPerUnit,
+                note: 'Initial stock purchase'
+            });
+        }
+
         // Load category and linkedProduct associations to match getItems output
         const responseItem = await InventoryItem.findOne({
             where: { id: item.id },
@@ -192,11 +207,10 @@ exports.deleteItem = async (req, res) => {
     }
 };
 
-// Add a stock movement (addition/deduction/waste/adjustment)
 exports.addStockMovement = async (req, res) => {
     try {
         const { id } = req.params;
-        const { type, quantity, note } = req.body; // type: 'addition', 'deduction', 'adjustment', 'waste'
+        const { type, quantity, note, totalCost } = req.body; // type: 'addition', 'deduction', 'adjustment', 'waste'
 
         const item = await InventoryItem.findOne({ where: { id, companyId: req.user.companyId } });
         if (!item) {
@@ -211,10 +225,18 @@ exports.addStockMovement = async (req, res) => {
         const previousStock = parseFloat(item.quantity || 0);
         let newStock = previousStock;
         let quantityChange = 0;
+        let purchaseCost = 0;
 
         if (type === 'addition') {
             quantityChange = parsedQuantity;
             newStock = previousStock + parsedQuantity;
+            // If totalCost is provided from UI, use it. Otherwise compute from item's unit cost.
+            if (totalCost !== undefined && totalCost !== '') {
+                purchaseCost = parseFloat(totalCost);
+                item.costPerUnit = purchaseCost / parsedQuantity;
+            } else {
+                purchaseCost = parsedQuantity * parseFloat(item.costPerUnit || 0);
+            }
         } else if (type === 'deduction' || type === 'waste') {
             quantityChange = -parsedQuantity;
             newStock = previousStock - parsedQuantity;
@@ -230,6 +252,18 @@ exports.addStockMovement = async (req, res) => {
         item.quantity = newStock;
         await item.save();
 
+        // If the item is linked to a product, update the product's price and cost to match the new unit cost
+        if (item.productId && type === 'addition' && purchaseCost > 0) {
+            const Product = require('../models').Product;
+            const linkedProduct = await Product.findByPk(item.productId);
+            if (linkedProduct) {
+                linkedProduct.cost = item.costPerUnit;
+                // As requested: "on add new price update price of that product"
+                linkedProduct.price = item.costPerUnit;
+                await linkedProduct.save();
+            }
+        }
+
         // Log the ledger
         const ledger = await InventoryLedger.create({
             inventoryItemId: item.id,
@@ -239,6 +273,7 @@ exports.addStockMovement = async (req, res) => {
             quantityChange,
             previousStock,
             newStock,
+            purchaseCost,
             note: note || ''
         });
 
