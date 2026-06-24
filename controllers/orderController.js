@@ -247,8 +247,19 @@ exports.getOrders = async (req, res) => {
     }
 };
 
-// Create a new order
 exports.createOrder = async (req, res) => {
+    const { RegisterSession } = require('../models');
+    try {
+        const activeSession = await RegisterSession.findOne({
+            where: { companyId: req.user.companyId, status: 'open' }
+        });
+        if (!activeSession) {
+            return res.status(403).json({ message: 'POS Register is closed. Please open the register session first.' });
+        }
+    } catch (e) {
+        console.error("Error checking active session on order creation:", e);
+    }
+
     const transaction = await sequelize.transaction();
     try {
         const {

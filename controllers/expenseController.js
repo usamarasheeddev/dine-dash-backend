@@ -21,13 +21,19 @@ exports.createExpense = async (req, res) => {
         const userId = req.user.id;
         const { category, amount, description, expenseDate } = req.body;
 
+        const { RegisterSession } = require('../models');
+        const activeSession = await RegisterSession.findOne({
+            where: { companyId, status: 'open' }
+        });
+
         const expense = await Expense.create({
             companyId,
             userId,
             category,
             amount,
             description,
-            expenseDate: expenseDate || new Date()
+            expenseDate: expenseDate || new Date(),
+            sessionId: activeSession ? activeSession.id : null
         });
 
         // Fetch it again to include the user
