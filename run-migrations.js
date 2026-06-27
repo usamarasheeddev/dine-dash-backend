@@ -14,6 +14,13 @@ async function run() {
   } catch(e) {
     console.log('InventoryLedgers purchaseCost error (might already exist):', e.message);
   }
+
+  try {
+    await sequelize.query('ALTER TABLE "Orders" ADD COLUMN "userId" INTEGER');
+    console.log('Added userId to Orders');
+  } catch(e) {
+    console.log('Orders userId error (might already exist):', e.message);
+  }
 }
 
 run().then(() => process.exit(0)).catch(e => console.error(e));

@@ -24,6 +24,10 @@ exports.getReport = async (req, res) => {
             }
         };
 
+        if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+            dateFilter.userId = req.user.id;
+        }
+
         // Add additional filters
         if (status) dateFilter.status = status;
         if (orderType) dateFilter.orderType = orderType;
@@ -199,6 +203,9 @@ exports.getOrders = async (req, res) => {
         const offset = (page - 1) * limit;
 
         const where = { companyId: req.user.companyId };
+        if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+            where.userId = req.user.id;
+        }
         if (status && status !== 'all') where.status = status;
         if (orderType && orderType !== 'all') where.orderType = orderType;
 
@@ -280,6 +287,7 @@ exports.createOrder = async (req, res) => {
             customerId,
             branchId,
             companyId: req.user.companyId,
+            userId: req.user.id,
             isUploaded: true
         }, { transaction });
 

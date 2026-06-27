@@ -7,6 +7,7 @@ exports.getDashboardStats = async (req, res) => {
     try {
         const companyId = req.user.companyId;
         const { timeframe = 'daily' } = req.query; // daily, weekly, monthly
+        const isAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
 
         // Get company timezone
         const company = await Company.findByPk(companyId);
@@ -29,7 +30,8 @@ exports.getDashboardStats = async (req, res) => {
                 status: 'completed',
                 createdAt: {
                     [Op.between]: [todayStart, todayEnd]
-                }
+                },
+                ...(!isAdmin && { userId: req.user.id })
             },
             raw: true
         });
@@ -41,7 +43,8 @@ exports.getDashboardStats = async (req, res) => {
                 companyId,
                 createdAt: {
                     [Op.between]: [todayStart, todayEnd]
-                }
+                },
+                ...(!isAdmin && { userId: req.user.id })
             }
         });
 
@@ -54,12 +57,18 @@ exports.getDashboardStats = async (req, res) => {
             ],
             where: {
                 companyId,
-                status: 'completed'
+                status: 'completed',
+                ...(!isAdmin && { userId: req.user.id })
             },
             raw: true
         });
 
-        const totalOrdersCount = await Order.count({ where: { companyId } });
+        const totalOrdersCount = await Order.count({ 
+            where: { 
+                companyId,
+                ...(!isAdmin && { userId: req.user.id })
+            } 
+        });
         const totalCompletedCount = Number(allTimeStats[0].count || 0);
         const totalRevenue = Number(allTimeStats[0].revenue || 0);
         const totalCredit = Number(allTimeStats[0].credit || 0);
@@ -68,7 +77,10 @@ exports.getDashboardStats = async (req, res) => {
         // 2. Orders by Status
         const statusGroups = await Order.findAll({
             attributes: ['status', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
-            where: { companyId },
+            where: { 
+                companyId,
+                ...(!isAdmin && { userId: req.user.id })
+            },
             group: ['status'],
             raw: true
         });
@@ -122,7 +134,11 @@ exports.getDashboardStats = async (req, res) => {
                     model: Order,
                     as: 'order',
                     attributes: [],
-                    where: { companyId, status: 'completed' }
+                    where: {
+                        companyId,
+                        status: 'completed',
+                        ...(!isAdmin && { userId: req.user.id })
+                    }
                 },
                 {
                     model: Product,
@@ -161,7 +177,8 @@ exports.getDashboardStats = async (req, res) => {
                 where: {
                     companyId,
                     status: 'completed',
-                    createdAt: { [Op.gte]: last24Hrs }
+                    createdAt: { [Op.gte]: last24Hrs },
+                    ...(!isAdmin && { userId: req.user.id })
                 },
                 group: [timeExpr],
                 order: [[timeExpr, 'ASC']],
@@ -206,7 +223,8 @@ exports.getDashboardStats = async (req, res) => {
                 where: {
                     companyId,
                     status: 'completed',
-                    createdAt: { [Op.gte]: last7Days }
+                    createdAt: { [Op.gte]: last7Days },
+                    ...(!isAdmin && { userId: req.user.id })
                 },
                 group: [timeExpr],
                 order: [[timeExpr, 'ASC']],
@@ -245,7 +263,8 @@ exports.getDashboardStats = async (req, res) => {
                 where: {
                     companyId,
                     status: 'completed',
-                    createdAt: { [Op.gte]: last30Days }
+                    createdAt: { [Op.gte]: last30Days },
+                    ...(!isAdmin && { userId: req.user.id })
                 },
                 group: [timeExpr],
                 order: [[timeExpr, 'ASC']],
@@ -274,7 +293,10 @@ exports.getDashboardStats = async (req, res) => {
 
         // 6. Recent Orders
         const recentOrders = await Order.findAll({
-            where: { companyId },
+            where: {
+                companyId,
+                ...(!isAdmin && { userId: req.user.id })
+            },
             include: [{ association: 'customer', attributes: ['name'] }],
             order: [['createdAt', 'DESC']],
             limit: 8
@@ -313,6 +335,7 @@ exports.getFinanceSummary = async (req, res) => {
     try {
         const companyId = req.user.companyId;
         const { startDate, endDate } = req.query;
+        const isAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
 
         const company = await Company.findByPk(companyId);
         const tz = company?.timezone || 'UTC';
@@ -327,9 +350,14 @@ exports.getFinanceSummary = async (req, res) => {
             }
         };
 
+        const ordersFilter = {
+            ...dateFilter,
+            ...(!isAdmin && { userId: req.user.id })
+        };
+
         // 1. Fetch completed orders in date range
         const orders = await Order.findAll({
-            where: { ...dateFilter, status: 'completed' },
+            where: { ...ordersFilter, status: 'completed' },
             include: [
                 {
                     association: 'items',
@@ -343,7 +371,8 @@ exports.getFinanceSummary = async (req, res) => {
             where: {
                 companyId,
                 type: 'addition',
-                createdAt: { [Op.between]: [start, end] }
+                createdAt: { [Op.between]: [start, end] },
+                ...(!isAdmin && { userId: req.user.id })
             },
             include: [{ association: 'item', attributes: ['name', 'unit'] }]
         });
@@ -353,7 +382,8 @@ exports.getFinanceSummary = async (req, res) => {
             where: {
                 companyId,
                 type: 'waste',
-                createdAt: { [Op.between]: [start, end] }
+                createdAt: { [Op.between]: [start, end] },
+                ...(!isAdmin && { userId: req.user.id })
             },
             include: [{ association: 'item', attributes: ['name', 'costPerUnit'] }]
         });
@@ -363,7 +393,8 @@ exports.getFinanceSummary = async (req, res) => {
         const manualExpenses = await Expense.findAll({
             where: {
                 companyId,
-                expenseDate: { [Op.between]: [start, end] }
+                expenseDate: { [Op.between]: [start, end] },
+                ...(!isAdmin && { userId: req.user.id })
             },
             include: [{ association: 'user', attributes: ['fullName'] }]
         });

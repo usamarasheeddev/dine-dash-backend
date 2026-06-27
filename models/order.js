@@ -16,6 +16,7 @@ module.exports = (sequelize, DataTypes) => {
       Order.belongsTo(models.Customer, { foreignKey: 'customerId', as: 'customer' });
       Order.belongsTo(models.Waiter, { foreignKey: 'waiterId', as: 'waiter' });
       Order.belongsTo(models.Table, { foreignKey: 'tableId', as: 'table' });
+      Order.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
       Order.hasMany(models.OrderItem, { foreignKey: 'orderId', as: 'items' });
     }
   }
@@ -35,6 +36,7 @@ module.exports = (sequelize, DataTypes) => {
     customerId: DataTypes.INTEGER,
     branchId: DataTypes.INTEGER,
     companyId: DataTypes.INTEGER,
+    userId: DataTypes.INTEGER,
     isUploaded: {
       type: DataTypes.BOOLEAN,
       defaultValue: false
