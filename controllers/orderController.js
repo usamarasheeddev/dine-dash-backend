@@ -40,6 +40,10 @@ exports.getReport = async (req, res) => {
             {
                 model: Customer,
                 as: 'customer'
+            },
+            {
+                association: 'user',
+                attributes: ['id', 'fullName', 'username']
             }
         ];
 
@@ -121,6 +125,17 @@ exports.getReport = async (req, res) => {
         });
         const customerStats = Object.values(customerMap).sort((a, b) => b.spent - a.spent);
 
+        // 4b. Staff Stats
+        const staffMap = {};
+        completedOrders.forEach(o => {
+            const staffId = o.userId || 0;
+            const name = o.user ? (o.user.fullName || o.user.username) : "Unknown Staff";
+            if (!staffMap[staffId]) staffMap[staffId] = { id: staffId, name, orders: 0, revenue: 0 };
+            staffMap[staffId].orders++;
+            staffMap[staffId].revenue += parseFloat(o.finalTotal || o.total || 0);
+        });
+        const staffStats = Object.values(staffMap).sort((a, b) => b.revenue - a.revenue);
+
         const isExportAll = exportAll === 'true';
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
@@ -164,6 +179,7 @@ exports.getReport = async (req, res) => {
             productStats: paginatedProducts,
             categoryStats,
             customerStats: paginatedCustomers,
+            staffStats: staffStats,
             ledger: {
                 entries: paginatedLedger,
                 totalCredit,
@@ -197,7 +213,7 @@ exports.getReport = async (req, res) => {
 // Get all orders (paginated)
 exports.getOrders = async (req, res) => {
     try {
-        const { search, status, orderType, startDate, endDate } = req.query;
+        const { search, status, orderType, startDate, endDate, userId } = req.query;
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
         const offset = (page - 1) * limit;
@@ -205,6 +221,8 @@ exports.getOrders = async (req, res) => {
         const where = { companyId: req.user.companyId };
         if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
             where.userId = req.user.id;
+        } else if (userId) {
+            where.userId = userId;
         }
         if (status && status !== 'all') where.status = status;
         if (orderType && orderType !== 'all') where.orderType = orderType;
@@ -254,6 +272,83 @@ exports.getOrders = async (req, res) => {
     }
 };
 
+async function calculateOrderItemCost(productId, companyId, item, transaction) {
+    if (!productId) return 0;
+
+    const recipeItemsForCost = await RecipeItem.findAll({
+        where: { productId, companyId },
+        transaction
+    });
+
+    const orderedVariations = [];
+    if (item.variations) {
+        if (typeof item.variations === 'object' && !Array.isArray(item.variations)) {
+            Object.entries(item.variations).forEach(([vName, optLabel]) => {
+                if (optLabel) {
+                    orderedVariations.push(optLabel.toString().toLowerCase());
+                    orderedVariations.push(`${vName}: ${optLabel}`.toString().toLowerCase());
+                }
+            });
+        } else if (Array.isArray(item.variations)) {
+            item.variations.forEach(v => {
+                if (v.value) {
+                    orderedVariations.push(v.value.toString().toLowerCase());
+                    if (v.name) orderedVariations.push(`${v.name}: ${v.value}`.toString().toLowerCase());
+                } else if (typeof v === 'string') {
+                    orderedVariations.push(v.toLowerCase());
+                }
+            });
+        }
+    }
+
+    const orderedAddons = [];
+    if (item.addons) {
+        if (Array.isArray(item.addons)) {
+            item.addons.forEach(a => {
+                if (a.name) orderedAddons.push(a.name.toString().toLowerCase());
+                else if (typeof a === 'string') orderedAddons.push(a.toLowerCase());
+            });
+        } else if (typeof item.addons === 'object') {
+            Object.keys(item.addons).forEach(k => orderedAddons.push(k.toLowerCase()));
+        }
+    }
+
+    let baseCost = 0;
+    let activeVariationCost = 0;
+    let itemCostPrice = 0;
+    const hasVarRecipeItems = recipeItemsForCost.some(ri => 
+        ri.variationName && 
+        orderedVariations.includes(ri.variationName.trim().toLowerCase()) && 
+        !ri.addonName
+    );
+
+    for (const ri of recipeItemsForCost) {
+        const invItem = await InventoryItem.findByPk(ri.inventoryItemId, { transaction });
+        if (invItem) {
+            const cost = parseFloat(invItem.costPerUnit || 0) * parseFloat(ri.quantity || 0);
+            if (!ri.variationName && !ri.addonName) {
+                baseCost += cost;
+            } else if (ri.variationName && !ri.addonName) {
+                if (orderedVariations.includes(ri.variationName.trim().toLowerCase())) {
+                    activeVariationCost += cost;
+                }
+            } else if (ri.addonName) {
+                if (orderedAddons.includes(ri.addonName.trim().toLowerCase())) {
+                    itemCostPrice += cost;
+                }
+            }
+        }
+    }
+
+    if (hasVarRecipeItems) {
+        itemCostPrice += activeVariationCost;
+    } else {
+        itemCostPrice += baseCost;
+    }
+
+    return itemCostPrice;
+}
+
 exports.createOrder = async (req, res) => {
     const { RegisterSession } = require('../models');
     try {
@@ -293,19 +388,7 @@ exports.createOrder = async (req, res) => {
 
         if (items && items.length > 0) {
             for (const item of items) {
-                let itemCostPrice = 0;
-                const recipeItemsForCost = await RecipeItem.findAll({
-                    where: { productId: item.productId, companyId: req.user.companyId },
-                    transaction
-                });
-                for (const ri of recipeItemsForCost) {
-                    // Check variations/addons if needed to be perfectly accurate,
-                    // but base recipe cost is enough for now per the simple plan.
-                    const invItem = await InventoryItem.findByPk(ri.inventoryItemId, { transaction });
-                    if (invItem) {
-                        itemCostPrice += parseFloat(invItem.costPerUnit || 0) * parseFloat(ri.quantity || 0);
-                    }
-                }
+                const itemCostPrice = await calculateOrderItemCost(item.productId, req.user.companyId, item, transaction);
 
                 await OrderItem.create({
                     orderId: newOrder.id,
@@ -652,19 +735,7 @@ exports.editOrder = async (req, res) => {
             }
 
             const itemQty = item.qty || item.quantity;
-            let itemCostPrice = 0;
-            if (productId) {
-                const recipeItemsForCost = await RecipeItem.findAll({
-                    where: { productId, companyId },
-                    transaction
-                });
-                for (const ri of recipeItemsForCost) {
-                    const invItem = await InventoryItem.findByPk(ri.inventoryItemId, { transaction });
-                    if (invItem) {
-                        itemCostPrice += parseFloat(invItem.costPerUnit || 0) * parseFloat(ri.quantity || 0);
-                    }
-                }
-            }
+            const itemCostPrice = await calculateOrderItemCost(productId, companyId, item, transaction);
 
             await OrderItem.create({
                 orderId: order.id,
