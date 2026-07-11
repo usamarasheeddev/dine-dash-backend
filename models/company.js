@@ -15,6 +15,7 @@ module.exports = (sequelize, DataTypes) => {
       Company.hasMany(models.InventoryItem, { foreignKey: 'companyId', as: 'inventoryItems' });
       Company.hasMany(models.Branch, { foreignKey: 'companyId', as: 'branches' });
       Company.hasMany(models.SubscriptionTransaction, { foreignKey: 'companyId', as: 'transactions' });
+      Company.hasMany(models.ActivationToken, { foreignKey: 'companyId', as: 'activationTokens' });
     }
   }
   Company.init({
@@ -68,6 +69,10 @@ module.exports = (sequelize, DataTypes) => {
     selectedPrinter: {
       type: DataTypes.STRING,
       defaultValue: ''
+    },
+    mode: {
+      type: DataTypes.STRING,
+      defaultValue: 'online'
     }
   }, {
     sequelize,

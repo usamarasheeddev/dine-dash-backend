@@ -3,6 +3,37 @@ const { Op } = require('sequelize');
 const { startOfDay, endOfDay } = require('date-fns');
 const { toZonedTime, fromZonedTime } = require('date-fns-tz');
 
+const isVariationMatch = (recipeItemVar, variations) => {
+    if (!recipeItemVar) return true;
+    const recipeVar = recipeItemVar.trim().toLowerCase();
+    const vars = Array.isArray(variations) ? variations : [];
+    return vars.some(v => {
+        if (recipeVar.includes(':')) {
+            const parts = recipeVar.split(':');
+            const vName = parts[0].trim();
+            const oLabel = parts[1].trim();
+            return v && typeof v === 'object' && 
+                   v.variationName?.trim().toLowerCase() === vName && 
+                   v.optionLabel?.trim().toLowerCase() === oLabel;
+        } else {
+            return (v && typeof v === 'object' && 
+                     (v.optionLabel?.trim().toLowerCase() === recipeVar || 
+                      v.variationName?.trim().toLowerCase() === recipeVar)) ||
+                   (typeof v === 'string' && v.trim().toLowerCase() === recipeVar);
+        }
+    });
+};
+
+const isAddonMatch = (recipeItemAddon, addonsList) => {
+    if (!recipeItemAddon) return true;
+    const recipeAddon = recipeItemAddon.trim().toLowerCase();
+    const addons = Array.isArray(addonsList) ? addonsList : [];
+    return addons.some(a => {
+        const aName = (a && typeof a === 'object') ? a.name : String(a);
+        return aName.trim().toLowerCase() === recipeAddon;
+    });
+};
+
 // ... (existing code, add at bottom)
 
 // Get Reports Data (Aggregates)
@@ -415,33 +446,11 @@ exports.createOrder = async (req, res) => {
 
                     if (recipeItems && recipeItems.length > 0) {
                         for (const recipeItem of recipeItems) {
-                            if (recipeItem.variationName) {
-                                const variations = Array.isArray(item.variations) ? item.variations : [];
-                                const hasVariation = variations.some(v => {
-                                    const recipeVar = recipeItem.variationName.trim().toLowerCase();
-                                    if (recipeVar.includes(':')) {
-                                        const parts = recipeVar.split(':');
-                                        const vName = parts[0].trim();
-                                        const oLabel = parts[1].trim();
-                                        return v && typeof v === 'object' && 
-                                               v.variationName?.trim().toLowerCase() === vName && 
-                                               v.optionLabel?.trim().toLowerCase() === oLabel;
-                                    } else {
-                                        return (v && typeof v === 'object' && 
-                                                 (v.optionLabel?.trim().toLowerCase() === recipeVar || 
-                                                  v.variationName?.trim().toLowerCase() === recipeVar)) ||
-                                               (typeof v === 'string' && v.trim().toLowerCase() === recipeVar);
-                                    }
-                                });
-                                if (!hasVariation) continue;
+                            if (recipeItem.variationName && !isVariationMatch(recipeItem.variationName, item.variations)) {
+                                continue;
                             }
-                            if (recipeItem.addonName) {
-                                const addons = Array.isArray(item.addons) ? item.addons : [];
-                                const hasAddon = addons.some(a => 
-                                    (a && typeof a === 'object' && a.name === recipeItem.addonName) ||
-                                    (typeof a === 'string' && a === recipeItem.addonName)
-                                );
-                                if (!hasAddon) continue;
+                            if (recipeItem.addonName && !isAddonMatch(recipeItem.addonName, item.addons)) {
+                                continue;
                             }
 
                             const deductAmount = parseFloat(recipeItem.quantity) * parseFloat(item.quantity);
@@ -664,6 +673,12 @@ exports.editOrder = async (req, res) => {
 
                 if (recipeItems && recipeItems.length > 0) {
                     for (const recipeItem of recipeItems) {
+                        if (recipeItem.variationName && !isVariationMatch(recipeItem.variationName, oldItem.variations)) {
+                            continue;
+                        }
+                        if (recipeItem.addonName && !isAddonMatch(recipeItem.addonName, oldItem.addons)) {
+                            continue;
+                        }
                         const revertAmount = parseFloat(recipeItem.quantity) * parseFloat(oldItem.quantity);
                         const ingredient = await InventoryItem.findOne({
                             where: { id: recipeItem.inventoryItemId, companyId },
@@ -762,6 +777,12 @@ exports.editOrder = async (req, res) => {
 
                     if (recipeItems && recipeItems.length > 0) {
                         for (const recipeItem of recipeItems) {
+                            if (recipeItem.variationName && !isVariationMatch(recipeItem.variationName, item.variations)) {
+                                continue;
+                            }
+                            if (recipeItem.addonName && !isAddonMatch(recipeItem.addonName, item.addons)) {
+                                continue;
+                            }
                             const deductAmount = parseFloat(recipeItem.quantity) * parseFloat(itemQty);
                             const ingredient = await InventoryItem.findOne({
                                 where: { id: recipeItem.inventoryItemId, companyId },

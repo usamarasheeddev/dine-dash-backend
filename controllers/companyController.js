@@ -1,4 +1,4 @@
-const { Company, User, ServiceRequest, SubscriptionPlan, SubscriptionTransaction, sequelize, Branch } = require('../models');
+const { Company, User, ServiceRequest, SubscriptionPlan, SubscriptionTransaction, sequelize, Branch, ActivationToken, Table, Waiter, ProductCategory, Product } = require('../models');
 const { Op } = require('sequelize');
 
 // Create a new company manually (Super Admin only)
@@ -43,6 +43,13 @@ exports.createCompany = async (req, res) => {
             role: 'admin',
             companyId: newCompany.id
         }, { transaction });
+
+        // Seed default product categories
+        const defaultCategories = ['Desi Food', 'Fast Food', 'Drinks'].map(name => ({
+            name,
+            companyId: newCompany.id
+        }));
+        await ProductCategory.bulkCreate(defaultCategories, { transaction });
 
         await transaction.commit();
         res.status(201).json({
@@ -120,7 +127,7 @@ exports.getDashboardStats = async (req, res) => {
 exports.updateCompany = async (req, res) => {
     try {
         const { id } = req.params;
-        const { status, subscriptionPlan } = req.body;
+        const { status, subscriptionPlan, mode } = req.body;
 
         const company = await Company.findByPk(id);
         if (!company) {
@@ -129,6 +136,7 @@ exports.updateCompany = async (req, res) => {
 
         const updates = {};
         if (status) updates.status = status;
+        if (mode) updates.mode = mode;
 
         if (subscriptionPlan) {
             const priceMap = { 'basic': 50, 'premium': 150, 'enterprise': 500 };
@@ -289,5 +297,161 @@ exports.getCompanyById = async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error fetching company details', error: error.message });
+    }
+};
+
+const crypto = require('crypto');
+
+exports.generateLicense = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const company = await Company.findByPk(id);
+        if (!company) {
+            return res.status(404).json({ message: 'Company not found' });
+        }
+
+        const adminUser = await User.findOne({ where: { companyId: company.id, role: 'admin' } });
+        if (!adminUser) {
+            return res.status(404).json({ message: 'Admin user not found for this company' });
+        }
+
+        const payload = {
+            company_id: company.id,
+            company_name: company.name,
+            company_email: company.email,
+            expiry_date: company.expiryDate ? company.expiryDate.toISOString() : new Date().toISOString(),
+            subscription_plan: company.subscriptionPlan,
+            subscription_price: parseFloat(company.subscriptionPrice),
+            admin_email: adminUser.email,
+            admin_username: adminUser.username,
+            admin_password_hash: adminUser.password,
+            mode: company.mode
+        };
+
+        const secretKey = process.env.LICENSE_SECRET_KEY || "dinedash-pos-licensing-cryptographic-secret-key-2026";
+        
+        const payloadJson = JSON.stringify(payload);
+        const payloadB64 = Buffer.from(payloadJson).toString('base64url');
+        
+        const signature = crypto.createHmac('sha256', secretKey)
+                                .update(payloadB64)
+                                .digest('hex');
+                                
+        const licenseKey = `${payloadB64}.${signature}`;
+
+        res.json({ licenseKey });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error generating license', error: error.message });
+    }
+};
+
+exports.createActivationToken = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const company = await Company.findByPk(id);
+        if (!company) {
+            return res.status(404).json({ message: 'Company not found' });
+        }
+
+        // Generate clean DD-XXXX-XXXX token
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let code = '';
+        for (let i = 0; i < 8; i++) {
+            if (i === 4) code += '-';
+            code += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        const token = `DD-${code}`;
+
+        // Expires in 24 hours
+        const expiresAt = new Date();
+        expiresAt.setHours(expiresAt.getHours() + 24);
+
+        // Delete any existing tokens for this company
+        await ActivationToken.destroy({ where: { companyId: company.id } });
+
+        // Save new token
+        const activationToken = await ActivationToken.create({
+            token,
+            companyId: company.id,
+            expiresAt
+        });
+
+        res.json({ token: activationToken.token, expiresAt: activationToken.expiresAt });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error creating activation token', error: error.message });
+    }
+};
+
+exports.getLicenseByToken = async (req, res) => {
+    try {
+        const { token } = req.params;
+        const activationToken = await ActivationToken.findOne({ where: { token } });
+        if (!activationToken) {
+            return res.status(404).json({ message: 'Invalid activation token' });
+        }
+
+        // Check expiry
+        if (new Date(activationToken.expiresAt) < new Date()) {
+            return res.status(400).json({ message: 'Activation token has expired' });
+        }
+
+        const company = await Company.findByPk(activationToken.companyId);
+        if (!company) {
+            return res.status(404).json({ message: 'Company not found' });
+        }
+
+        const adminUser = await User.findOne({ where: { companyId: company.id, role: 'admin' } });
+        if (!adminUser) {
+            return res.status(404).json({ message: 'Admin user not found for this company' });
+        }
+
+        const payload = {
+            company_id: company.id,
+            company_name: company.name,
+            company_email: company.email,
+            expiry_date: company.expiryDate ? company.expiryDate.toISOString() : new Date().toISOString(),
+            subscription_plan: company.subscriptionPlan,
+            subscription_price: parseFloat(company.subscriptionPrice),
+            admin_email: adminUser.email,
+            admin_username: adminUser.username,
+            admin_password_hash: adminUser.password,
+            mode: company.mode
+        };
+
+        const secretKey = process.env.LICENSE_SECRET_KEY || "dinedash-pos-licensing-cryptographic-secret-key-2026";
+        
+        const payloadJson = JSON.stringify(payload);
+        const payloadB64 = Buffer.from(payloadJson).toString('base64url');
+        
+        const signature = crypto.createHmac('sha256', secretKey)
+                                .update(payloadB64)
+                                .digest('hex');
+                                
+        const licenseKey = `${payloadB64}.${signature}`;
+
+        // Fetch company master data
+        const [branches, tables, waiters, productCategories, products] = await Promise.all([
+            Branch.findAll({ where: { companyId: company.id } }),
+            Table.findAll({ where: { companyId: company.id } }),
+            Waiter.findAll({ where: { companyId: company.id } }),
+            ProductCategory.findAll({ where: { companyId: company.id } }),
+            Product.findAll({ where: { companyId: company.id } })
+        ]);
+
+        res.json({ 
+            licenseKey,
+            companyData: {
+                branches,
+                tables,
+                waiters,
+                productCategories,
+                products
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error retrieving activation info', error: error.message });
     }
 };

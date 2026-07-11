@@ -17,6 +17,9 @@ router.post('/renew', auth('superadmin'), companyController.renewSubscription);
 router.post('/:id/renew', auth('superadmin'), companyController.renewSubscription);
 
 // These must be at the bottom so /:id doesn't match literal paths like /my-settings
+router.get('/activation-info/:token', companyController.getLicenseByToken);
+router.post('/:id/activation-token', auth('superadmin'), companyController.createActivationToken);
+router.get('/:id/license', auth('superadmin'), companyController.generateLicense);
 router.get('/:id', auth('superadmin'), companyController.getCompanyById);
 router.put('/:id', auth('superadmin'), companyController.updateCompany);
 

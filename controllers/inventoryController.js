@@ -284,10 +284,13 @@ exports.addStockMovement = async (req, res) => {
     }
 };
 
-// Get the ledger history for a specific item
+// Get the ledger history for a specific item (paginated)
 exports.getInventoryLedger = async (req, res) => {
     try {
         const { id } = req.params;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
 
         // Verify item belongs to company first
         const item = await InventoryItem.findOne({ where: { id, companyId: req.user.companyId } });
@@ -295,13 +298,20 @@ exports.getInventoryLedger = async (req, res) => {
             return res.status(404).json({ message: 'Inventory item not found' });
         }
 
-        const ledger = await InventoryLedger.findAll({
+        const { count, rows: ledger } = await InventoryLedger.findAndCountAll({
             where: { inventoryItemId: id, companyId: req.user.companyId },
             include: [{ model: User, as: 'user', attributes: ['id', 'fullName', 'email'] }],
-            order: [['createdAt', 'DESC']]
+            order: [['createdAt', 'DESC']],
+            limit,
+            offset
         });
 
-        res.json(ledger);
+        res.json({
+            ledger,
+            totalCount: count,
+            totalPages: Math.ceil(count / limit),
+            currentPage: page
+        });
     } catch (error) {
         console.error('Error fetching inventory ledger:', error);
         res.status(500).json({ message: 'Server error fetching inventory ledger' });
