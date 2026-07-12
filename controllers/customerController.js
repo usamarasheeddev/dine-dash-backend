@@ -73,7 +73,7 @@ exports.getCustomers = async (req, res) => {
                 address: customerObj.address,
                 balance: Number(customerObj.current_balance || 0),
                 orders: Number(customerObj.ordersCount || 0),
-                ledger: customerObj.ledgerCount > 0 ? Array(Number(customerObj.ledgerCount)).fill({}) : [],
+                ledgerCount: Number(customerObj.ledgerCount || 0),
                 createdAt: customerObj.createdAt
             };
         });

@@ -2,15 +2,30 @@ const { Product, RecipeItem, InventoryItem, sequelize } = require('../models');
 
 exports.getRecipes = async (req, res) => {
     try {
+        const { search } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        const { Op } = require('sequelize');
+        const where = { companyId: req.user.companyId, active: true };
+
+        if (search) {
+            where.name = { [Op.iLike]: `%${search.trim()}%` };
+        }
+
         // Find all products and their linked recipe items with ingredients
-        const products = await Product.findAll({
-            where: { companyId: req.user.companyId, active: true },
+        const { count, rows: products } = await Product.findAndCountAll({
+            where,
             include: [{
                 model: RecipeItem,
                 as: 'recipeItems',
                 include: [{ model: InventoryItem, as: 'inventoryItem' }]
             }],
-            order: [['name', 'ASC']]
+            order: [['name', 'ASC']],
+            limit,
+            offset,
+            distinct: true
         });
 
         // Compute pricing & margin for each product recipe
@@ -113,7 +128,12 @@ exports.getRecipes = async (req, res) => {
             };
         });
 
-        res.json(recipes);
+        res.json({
+            recipes,
+            totalCount: count,
+            totalPages: Math.ceil(count / limit),
+            currentPage: page
+        });
     } catch (error) {
         console.error('Error fetching recipes:', error);
         res.status(500).json({ message: 'Server error fetching recipes' });

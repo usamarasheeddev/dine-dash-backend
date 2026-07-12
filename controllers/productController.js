@@ -3,8 +3,41 @@ const { Product, ProductCategory } = require('../models');
 // --- Categories ---
 exports.getCategories = async (req, res) => {
     try {
-        const categories = await ProductCategory.findAll({ where: { companyId: req.user.companyId } });
-        res.json(categories);
+        const { search, page, limit } = req.query;
+        const shouldPaginate = page !== undefined || req.query.paginate === 'true';
+
+        const { Op } = require('sequelize');
+        const whereClause = { companyId: req.user.companyId };
+
+        if (search) {
+            whereClause.name = { [Op.iLike]: `%${search.trim()}%` };
+        }
+
+        if (shouldPaginate) {
+            const pageNum = parseInt(page) || 1;
+            const limitNum = parseInt(limit) || 10;
+            const offsetNum = (pageNum - 1) * limitNum;
+
+            const { count, rows: categories } = await ProductCategory.findAndCountAll({
+                where: whereClause,
+                order: [['name', 'ASC']],
+                limit: limitNum,
+                offset: offsetNum
+            });
+
+            return res.json({
+                categories,
+                totalCount: count,
+                totalPages: Math.ceil(count / limitNum),
+                currentPage: pageNum
+            });
+        } else {
+            const categories = await ProductCategory.findAll({
+                where: whereClause,
+                order: [['name', 'ASC']]
+            });
+            return res.json(categories);
+        }
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error' });
@@ -67,14 +100,50 @@ exports.deleteCategory = async (req, res) => {
 // --- Products ---
 exports.getProducts = async (req, res) => {
     try {
-        const products = await Product.findAll({
-            where: { companyId: req.user.companyId },
+        const { search, categoryId, page, limit } = req.query;
+        const shouldPaginate = page !== undefined || req.query.paginate === 'true';
+
+        const { Op } = require('sequelize');
+        const whereClause = { companyId: req.user.companyId };
+
+        if (search) {
+            whereClause.name = { [Op.iLike]: `%${search.trim()}%` };
+        }
+        if (categoryId) {
+            whereClause.categoryId = categoryId;
+        }
+
+        const queryOptions = {
+            where: whereClause,
             include: [
                 { model: ProductCategory, as: 'category' },
                 { model: require('../models').InventoryItem, as: 'linkedInventory', attributes: ['id', 'name', 'unit', 'quantity'] }
-            ]
-        });
-        res.json(products);
+            ],
+            order: [['name', 'ASC']]
+        };
+
+        if (shouldPaginate) {
+            const pageNum = parseInt(page) || 1;
+            const limitNum = parseInt(limit) || 10;
+            const offsetNum = (pageNum - 1) * limitNum;
+
+            const { count, rows: products } = await Product.findAndCountAll({
+                ...queryOptions,
+                limit: limitNum,
+                offset: offsetNum,
+                distinct: true
+            });
+
+            return res.json({
+                products,
+                totalCount: count,
+                totalPages: Math.ceil(count / limitNum),
+                currentPage: pageNum
+            });
+        } else {
+            const products = await Product.findAll(queryOptions);
+            return res.json(products);
+        }
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error' });
