@@ -3,13 +3,53 @@ const bcrypt = require('bcryptjs');
 
 exports.getStaff = async (req, res) => {
     try {
-        const staff = await User.findAll({
-            where: {
-                companyId: req.user.companyId,
-            },
-            attributes: { exclude: ['password'] }
-        });
-        res.json(staff);
+        const { search, role, status, page, limit } = req.query;
+        const shouldPaginate = page !== undefined || req.query.paginate === 'true';
+
+        const { Op } = require('sequelize');
+        const whereClause = { companyId: req.user.companyId };
+
+        if (role && role !== 'all') {
+            whereClause.role = role;
+        }
+        if (status && status !== 'all') {
+            whereClause.status = status;
+        }
+        if (search) {
+            whereClause[Op.or] = [
+                { fullName: { [Op.iLike]: `%${search.trim()}%` } },
+                { username: { [Op.iLike]: `%${search.trim()}%` } },
+                { email: { [Op.iLike]: `%${search.trim()}%` } }
+            ];
+        }
+
+        const queryOptions = {
+            where: whereClause,
+            attributes: { exclude: ['password'] },
+            order: [['fullName', 'ASC'], ['username', 'ASC']]
+        };
+
+        if (shouldPaginate) {
+            const pageNum = parseInt(page) || 1;
+            const limitNum = parseInt(limit) || 10;
+            const offsetNum = (pageNum - 1) * limitNum;
+
+            const { count, rows: staff } = await User.findAndCountAll({
+                ...queryOptions,
+                limit: limitNum,
+                offset: offsetNum
+            });
+
+            return res.json({
+                staff,
+                totalCount: count,
+                totalPages: Math.ceil(count / limitNum),
+                currentPage: pageNum
+            });
+        } else {
+            const staff = await User.findAll(queryOptions);
+            return res.json(staff);
+        }
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error' });

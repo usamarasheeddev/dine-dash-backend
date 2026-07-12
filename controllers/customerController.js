@@ -49,8 +49,8 @@ exports.getCustomers = async (req, res) => {
                 email: customerObj.email || '',
                 address: customerObj.address,
                 balance: Number(customerObj.current_balance || 0),
-                orders: customerObj.orders ? customerObj.orders.length : 0,
-                ledger: customerObj.ledger || [],
+                orders: Number(customerObj.ordersCount || 0),
+                ledgerCount: Number(customerObj.ledgerCount || 0),
                 createdAt: customerObj.createdAt
             };
         });

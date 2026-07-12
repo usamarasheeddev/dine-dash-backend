@@ -65,16 +65,28 @@ exports.deleteCategory = async (req, res) => {
     }
 };
 
-// Get all inventory items (optional filter by type)
+// Get all inventory items (optional filter by type, conditionally paginated)
 exports.getItems = async (req, res) => {
     try {
-        const { type } = req.query; // 'simple' | 'ingredient'
+        const { type, search, page, limit, filter } = req.query; // 'simple' | 'ingredient'
+        const shouldPaginate = page !== undefined || req.query.paginate === 'true';
+
+        const { Op } = require('sequelize');
         const whereClause = { companyId: req.user.companyId };
+        
         if (type) {
             whereClause.type = type;
         }
+        if (search) {
+            whereClause.name = { [Op.iLike]: `%${search.trim()}%` };
+        }
+        if (filter === 'low') {
+            whereClause.quantity = { [Op.lte]: sequelize.col('minStock'), [Op.gt]: 0 };
+        } else if (filter === 'out') {
+            whereClause.quantity = 0;
+        }
 
-        const items = await InventoryItem.findAll({
+        const queryOptions = {
             where: whereClause,
             include: [
                 { model: Product, as: 'linkedProduct', attributes: ['id', 'name', 'price'] },
@@ -94,8 +106,45 @@ exports.getItems = async (req, res) => {
                 ]
             },
             order: [['createdAt', 'DESC']]
-        });
-        res.json(items);
+        };
+
+        if (shouldPaginate) {
+            const pageNum = parseInt(page) || 1;
+            const limitNum = parseInt(limit) || 10;
+            const offsetNum = (pageNum - 1) * limitNum;
+            
+            const { count, rows: items } = await InventoryItem.findAndCountAll({
+                ...queryOptions,
+                limit: limitNum,
+                offset: offsetNum,
+                distinct: true
+            });
+
+            // Calculate overall stats for activeType / company
+            const statsClause = { companyId: req.user.companyId };
+            if (type) {
+                statsClause.type = type;
+            }
+            const allItemsForStats = await InventoryItem.findAll({ where: statsClause });
+            const lowStockCount = allItemsForStats.filter(i => Number(i.quantity) <= Number(i.minStock) && Number(i.quantity) > 0).length;
+            const outOfStockCount = allItemsForStats.filter(i => Number(i.quantity) === 0).length;
+            const totalValue = allItemsForStats.reduce((sum, i) => sum + Number(i.quantity || 0) * Number(i.costPerUnit || 0), 0);
+
+            return res.json({
+                items,
+                totalCount: count,
+                totalPages: Math.ceil(count / limitNum),
+                currentPage: pageNum,
+                stats: {
+                    lowStockCount,
+                    outOfStockCount,
+                    totalValue
+                }
+            });
+        } else {
+            const items = await InventoryItem.findAll(queryOptions);
+            return res.json(items);
+        }
     } catch (error) {
         console.error('Error fetching inventory:', error);
         res.status(500).json({ message: 'Server error fetching inventory items' });
