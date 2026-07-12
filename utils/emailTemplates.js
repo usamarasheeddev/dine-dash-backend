@@ -66,16 +66,20 @@ module.exports = {
     `),
 
     // For the Sender on Approval
-    getServiceApprovalTemplate: (companyName) => baseTemplate(`
+    getServiceApprovalTemplate: (companyName, email, password) => baseTemplate(`
         <h2 style="color: ${BRAND_COLOR}; text-align: center;">Welcome to DineDash!</h2>
         <p>Hello <strong>${companyName}</strong>,</p>
         <p>Great news! Your request has been <strong>Approved</strong>. Your company profile and initial administrative account are now ready.</p>
-        <p>You can now log in to your dashboard to set up your branches, staff, and products.</p>
+        <p>You can now log in to your dashboard to set up your branches, staff, and products using the credentials below:</p>
+        <div class="info-box" style="border-left: 4px solid ${BRAND_COLOR};">
+            <p style="margin: 5px 0;"><strong>Login Email:</strong> ${email}</p>
+            <p style="margin: 5px 0;"><strong>Temporary Password:</strong> <code style="background: #e5e7eb; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-family: monospace;">${password}</code></p>
+        </div>
         <div style="text-align: center;">
             <a href="${process.env.FRONTEND_URL}/login" class="button">Log In to Dashboard</a>
         </div>
-        <div class="info-box" style="border-left: 4px solid ${BRAND_COLOR};">
-            <p style="margin:0; font-size: 14px;"><strong>Tip:</strong> Start by adding your first branch and categories in the Catalog section.</p>
+        <div class="info-box" style="background: #fff8f8; border-left: 4px solid #f59e0b;">
+            <p style="margin:0; font-size: 13px; color: #b45309;"><strong>Security Note:</strong> Please change your temporary password immediately upon your first login.</p>
         </div>
         <p>We're excited to have you on board!</p>
         <p>Best regards,<br>The DineDash Team</p>

@@ -177,7 +177,7 @@ exports.updateRequestStatus = async (req, res) => {
                 await sendEmail({
                     email: emailData.to,
                     subject: 'Welcome to DineDash - Account Approved!',
-                    html: getServiceApprovalTemplate(request.companyName)
+                    html: getServiceApprovalTemplate(request.companyName, emailData.to, generatedPassword)
                 });
             } catch (mailError) {
                 console.error('Approval email failed to send:', mailError);
