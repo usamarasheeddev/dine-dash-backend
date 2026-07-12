@@ -11,12 +11,11 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 app.use(cors({
     origin: [
-        'https://dine-dash-pos.vercel.app',
-        'https://dine-dash-pos.vercel.app/',
+
         'http://localhost:3000',
         'http://localhost:8080',
         'https://dine-dash-pos-five.vercel.app',
-        'https://pos-dine-dash.vercel.app',
+        'https://pos-dine-dash.vercel.app/',
 
     ],
     credentials: true
