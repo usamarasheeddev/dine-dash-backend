@@ -1,4 +1,5 @@
 const { Voucher, Customer } = require('../models');
+const cache = require('../utils/cache');
 
 // Get all vouchers (or filter by customer)
 exports.getVouchers = async (req, res) => {
@@ -49,6 +50,7 @@ exports.addVoucher = async (req, res) => {
                 customer.current_balance = parseFloat(customer.current_balance) + parseFloat(amount);
             }
             await customer.save();
+            cache.invalidateCustomerCache(req.user.companyId);
         }
 
         res.status(201).json(newVoucher);
@@ -77,6 +79,7 @@ exports.deleteVoucher = async (req, res) => {
                 customer.current_balance = parseFloat(customer.current_balance) - parseFloat(voucher.amount);
             }
             await customer.save();
+            cache.invalidateCustomerCache(req.user.companyId);
         }
 
         await voucher.destroy();

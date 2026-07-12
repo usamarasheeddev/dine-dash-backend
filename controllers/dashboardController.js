@@ -520,3 +520,276 @@ exports.getFinanceSummary = async (req, res) => {
         res.status(500).json({ message: 'Server error retrieving finance stats' });
     }
 };
+
+// ── Shared helper ─────────────────────────────────────────────────────────────
+async function _dashboardBase(req) {
+    const companyId = req.user.companyId;
+    const isAdmin   = req.user.role === 'admin' || req.user.role === 'superadmin';
+    const company   = await Company.findByPk(companyId);
+    const tz        = company?.timezone || 'UTC';
+    const now       = new Date();
+    const todayStart = fromZonedTime(startOfDay(toZonedTime(now, tz)), tz);
+    const todayEnd   = fromZonedTime(endOfDay(toZonedTime(now, tz)), tz);
+    return { companyId, isAdmin, tz, todayStart, todayEnd };
+}
+
+// ── /dashboard/stats/summary ──────────────────────────────────────────────────
+exports.getDashboardSummary = async (req, res) => {
+    try {
+        const { companyId, isAdmin, todayStart, todayEnd } = await _dashboardBase(req);
+
+        const todayQuery = await Order.findAll({
+            attributes: [
+                [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue'],
+                [sequelize.literal('SUM(CASE WHEN "paymentMethod" = \'credit\' THEN "finalTotal" ELSE 0 END)'), 'credit']
+            ],
+            where: { companyId, status: 'completed', createdAt: { [Op.between]: [todayStart, todayEnd] }, ...(!isAdmin && { userId: req.user.id }) },
+            raw: true
+        });
+
+        const allTimeQuery = await Order.findAll({
+            attributes: [
+                [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue'],
+                [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+                [sequelize.literal('SUM(CASE WHEN "paymentMethod" = \'credit\' THEN "finalTotal" ELSE 0 END)'), 'credit']
+            ],
+            where: { companyId, status: 'completed', ...(!isAdmin && { userId: req.user.id }) },
+            raw: true
+        });
+
+        const todayOrdersCount = await Order.count({
+            where: { companyId, createdAt: { [Op.between]: [todayStart, todayEnd] }, ...(!isAdmin && { userId: req.user.id }) }
+        });
+
+        const totalOrdersCount = await Order.count({
+            where: { companyId, ...(!isAdmin && { userId: req.user.id }) }
+        });
+
+        const todayRevenue         = Number(todayQuery[0].revenue || 0);
+        const todayCredit          = Number(todayQuery[0].credit || 0);
+        const totalRevenue         = Number(allTimeQuery[0].revenue || 0);
+        const totalCredit          = Number(allTimeQuery[0].credit || 0);
+        const totalCompletedCount  = Number(allTimeQuery[0].count || 0);
+        const avgOrderValue        = totalCompletedCount > 0 ? totalRevenue / totalCompletedCount : 0;
+
+        res.json({
+            todayRevenue, todayCredit, todayOrdersCount,
+            totalRevenue, totalCredit, totalOrdersCount, totalCompletedCount, avgOrderValue
+        });
+    } catch (err) {
+        console.error('getDashboardSummary error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// ── /dashboard/stats/orders-status ───────────────────────────────────────────
+exports.getDashboardOrdersStatus = async (req, res) => {
+    try {
+        const { companyId, isAdmin } = await _dashboardBase(req);
+
+        const statusGroups = await Order.findAll({
+            attributes: ['status', [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
+            where: { companyId, ...(!isAdmin && { userId: req.user.id }) },
+            group: ['status'],
+            raw: true
+        });
+
+        const ordersByStatus = { new: 0, preparing: 0, pending: 0, completed: 0, cancelled: 0 };
+        statusGroups.forEach(g => { ordersByStatus[g.status] = Number(g.count); });
+
+        res.json({ ordersByStatus });
+    } catch (err) {
+        console.error('getDashboardOrdersStatus error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// ── /dashboard/stats/inventory ────────────────────────────────────────────────
+exports.getDashboardInventory = async (req, res) => {
+    try {
+        const { companyId } = await _dashboardBase(req);
+
+        const lowStockItems = await InventoryItem.findAll({
+            where: { companyId, quantity: { [Op.gt]: 0, [Op.lte]: sequelize.col('minStock') } }
+        });
+
+        const outOfStockItems = await InventoryItem.findAll({
+            where: { companyId, quantity: { [Op.lte]: 0 } }
+        });
+
+        const inventorySummary = await InventoryItem.findAll({
+            attributes: [
+                [sequelize.literal('SUM("quantity" * "costPerUnit")'), 'totalValue'],
+                [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+            ],
+            where: { companyId },
+            raw: true
+        });
+
+        res.json({
+            lowStockItems,
+            outOfStockItems,
+            totalStockValue:      Number(inventorySummary[0].totalValue || 0),
+            totalInventoryItems:  Number(inventorySummary[0].count || 0)
+        });
+    } catch (err) {
+        console.error('getDashboardInventory error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// ── /dashboard/stats/top-products ─────────────────────────────────────────────
+exports.getDashboardTopProducts = async (req, res) => {
+    try {
+        const { companyId, isAdmin } = await _dashboardBase(req);
+
+        const topProductsData = await OrderItem.findAll({
+            attributes: [
+                [sequelize.fn('SUM', sequelize.col('OrderItem.quantity')), 'qty'],
+                [sequelize.fn('SUM', sequelize.col('OrderItem.total')), 'revenue']
+            ],
+            include: [
+                { model: Order, as: 'order', attributes: [], where: { companyId, status: 'completed', ...(!isAdmin && { userId: req.user.id }) } },
+                { model: Product, as: 'product', attributes: ['name'] }
+            ],
+            group: ['product.id', 'product.name'],
+            order: [[sequelize.literal('revenue'), 'DESC']],
+            limit: 5,
+            raw: true
+        });
+
+        const topProducts = topProductsData.map(p => ({
+            name:    p['product.name'],
+            qty:     Number(p.qty),
+            revenue: Number(p.revenue)
+        }));
+
+        res.json({ topProducts });
+    } catch (err) {
+        console.error('getDashboardTopProducts error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// ── /dashboard/stats/graph ────────────────────────────────────────────────────
+exports.getDashboardGraph = async (req, res) => {
+    try {
+        const { companyId, isAdmin, tz } = await _dashboardBase(req);
+        const timeframe = req.query.timeframe || 'daily';
+        let graphData = [];
+
+        if (timeframe === 'daily') {
+            const last24Hrs = new Date(new Date().getTime() - 24 * 60 * 60 * 1000);
+            const timeExpr  = sequelize.fn('date_trunc', 'hour', sequelize.col('createdAt'));
+            const graphQuery = await Order.findAll({
+                attributes: [
+                    [timeExpr, 'time'],
+                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue'],
+                    [sequelize.literal('SUM(CASE WHEN "paymentMethod" = \'credit\' THEN "finalTotal" ELSE 0 END)'), 'credit']
+                ],
+                where: { companyId, status: 'completed', createdAt: { [Op.gte]: last24Hrs }, ...(!isAdmin && { userId: req.user.id }) },
+                group: [timeExpr],
+                order: [[timeExpr, 'ASC']],
+                raw: true
+            });
+
+            const hoursMap = {};
+            graphQuery.forEach(g => {
+                const label = formatInTimeZone(new Date(g.time), tz, 'h a');
+                if (!hoursMap[label]) hoursMap[label] = { revenue: 0, credit: 0 };
+                hoursMap[label].revenue += Number(g.revenue);
+                hoursMap[label].credit  += Number(g.credit);
+            });
+
+            const nowUTC = new Date();
+            for (let i = 23; i >= 0; i--) {
+                const d     = new Date(nowUTC.getTime() - i * 60 * 60 * 1000);
+                const label = formatInTimeZone(d, tz, 'h a');
+                if (!graphData.find(x => x.day === label)) {
+                    graphData.push({ day: label, revenue: hoursMap[label]?.revenue || 0, credit: hoursMap[label]?.credit || 0 });
+                }
+            }
+
+        } else if (timeframe === 'weekly') {
+            const last7Days = new Date(new Date().setDate(new Date().getDate() - 7));
+            const timeExpr  = sequelize.fn('date_trunc', 'day', sequelize.literal(`"Order"."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE '${tz}'`));
+            const graphQuery = await Order.findAll({
+                attributes: [
+                    [timeExpr, 'time'],
+                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue'],
+                    [sequelize.literal('SUM(CASE WHEN "paymentMethod" = \'credit\' THEN "finalTotal" ELSE 0 END)'), 'credit']
+                ],
+                where: { companyId, status: 'completed', createdAt: { [Op.gte]: last7Days }, ...(!isAdmin && { userId: req.user.id }) },
+                group: [timeExpr],
+                order: [[timeExpr, 'ASC']],
+                raw: true
+            });
+
+            const daysMap = {};
+            graphQuery.forEach(g => {
+                const label = new Date(g.time).toLocaleDateString('en', { weekday: 'short' });
+                daysMap[label] = { revenue: Number(g.revenue), credit: Number(g.credit) };
+            });
+
+            for (let i = 6; i >= 0; i--) {
+                const d     = new Date();
+                d.setDate(d.getDate() - i);
+                const label = d.toLocaleDateString('en', { weekday: 'short' });
+                graphData.push({ day: label, revenue: daysMap[label]?.revenue || 0, credit: daysMap[label]?.credit || 0 });
+            }
+
+        } else if (timeframe === 'monthly') {
+            const last30Days = new Date(new Date().setDate(new Date().getDate() - 30));
+            const timeExpr   = sequelize.fn('date_trunc', 'day', sequelize.literal(`"Order"."createdAt" AT TIME ZONE 'UTC' AT TIME ZONE '${tz}'`));
+            const graphQuery = await Order.findAll({
+                attributes: [
+                    [timeExpr, 'time'],
+                    [sequelize.fn('SUM', sequelize.col('finalTotal')), 'revenue'],
+                    [sequelize.literal('SUM(CASE WHEN "paymentMethod" = \'credit\' THEN "finalTotal" ELSE 0 END)'), 'credit']
+                ],
+                where: { companyId, status: 'completed', createdAt: { [Op.gte]: last30Days }, ...(!isAdmin && { userId: req.user.id }) },
+                group: [timeExpr],
+                order: [[timeExpr, 'ASC']],
+                raw: true
+            });
+
+            const daysMap = {};
+            graphQuery.forEach(g => {
+                const label = new Date(g.time).toLocaleDateString('en', { month: 'short', day: 'numeric' });
+                daysMap[label] = { revenue: Number(g.revenue), credit: Number(g.credit) };
+            });
+
+            for (let i = 29; i >= 0; i--) {
+                const d     = new Date();
+                d.setDate(d.getDate() - i);
+                const label = d.toLocaleDateString('en', { month: 'short', day: 'numeric' });
+                graphData.push({ day: label, revenue: daysMap[label]?.revenue || 0, credit: daysMap[label]?.credit || 0 });
+            }
+        }
+
+        res.json({ graphData });
+    } catch (err) {
+        console.error('getDashboardGraph error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// ── /dashboard/stats/recent-orders ────────────────────────────────────────────
+exports.getDashboardRecentOrders = async (req, res) => {
+    try {
+        const { companyId, isAdmin } = await _dashboardBase(req);
+        const limit = parseInt(req.query.limit) || 8;
+
+        const recentOrders = await Order.findAll({
+            where: { companyId, ...(!isAdmin && { userId: req.user.id }) },
+            include: [{ association: 'customer', attributes: ['name'] }],
+            order: [['createdAt', 'DESC']],
+            limit
+        });
+
+        res.json({ recentOrders });
+    } catch (err) {
+        console.error('getDashboardRecentOrders error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};

@@ -1,4 +1,5 @@
 const { Customer, CustomerLedger, Order } = require('../models');
+const cache = require('../utils/cache');
 
 // Get all customers (paginated & searchable)
 exports.getCustomers = async (req, res) => {
@@ -7,6 +8,12 @@ exports.getCustomers = async (req, res) => {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const offset = (page - 1) * limit;
+
+        const cacheKey = `customers:${req.user.companyId}:${search || ''}:${page}:${limit}`;
+        const cachedData = cache.get(cacheKey);
+        if (cachedData) {
+            return res.json(cachedData);
+        }
 
         const { Op } = require('sequelize');
         const where = { companyId: req.user.companyId };
@@ -29,10 +36,26 @@ exports.getCustomers = async (req, res) => {
 
         const { count, rows: customers } = await Customer.findAndCountAll({
             where,
-            include: [
-                { model: CustomerLedger, as: 'ledger' },
-                { model: Order, as: 'orders' }
-            ],
+            attributes: {
+                include: [
+                    [
+                        Customer.sequelize.literal(`(
+                            SELECT COALESCE(COUNT(*), 0)
+                            FROM "Orders" AS o
+                            WHERE o."customerId" = "Customer".id
+                        )`),
+                        'ordersCount'
+                    ],
+                    [
+                        Customer.sequelize.literal(`(
+                            SELECT COALESCE(COUNT(*), 0)
+                            FROM "CustomerLedgers" AS cl
+                            WHERE cl."customerId" = "Customer".id
+                        )`),
+                        'ledgerCount'
+                    ]
+                ]
+            },
             order: [['createdAt', 'DESC']],
             limit,
             offset,
@@ -49,21 +72,24 @@ exports.getCustomers = async (req, res) => {
                 email: customerObj.email || '',
                 address: customerObj.address,
                 balance: Number(customerObj.current_balance || 0),
-                orders: customerObj.orders ? customerObj.orders.length : 0,
-                ledger: customerObj.ledger || [],
+                orders: Number(customerObj.ordersCount || 0),
+                ledger: customerObj.ledgerCount > 0 ? Array(Number(customerObj.ledgerCount)).fill({}) : [],
                 createdAt: customerObj.createdAt
             };
         });
 
         const totalOutstanding = await Customer.sum('current_balance', { where: { companyId: req.user.companyId } });
 
-        res.json({
+        const responseData = {
             customers: formatted,
             totalCount: count,
             totalPages: Math.ceil(count / limit),
             currentPage: page,
             totalOutstanding: Number(totalOutstanding || 0)
-        });
+        };
+
+        cache.set(cacheKey, responseData, 60000); // Cache for 1 minute
+        res.json(responseData);
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error' });
@@ -82,6 +108,8 @@ exports.addCustomer = async (req, res) => {
             current_balance: initial_balance || 0,
             companyId: req.user.companyId
         });
+
+        cache.invalidateCustomerCache(req.user.companyId);
         res.status(201).json(newCustomer);
     } catch (error) {
         console.error(error);
@@ -105,6 +133,7 @@ exports.updateCustomer = async (req, res) => {
         customer.address = address || customer.address;
 
         await customer.save();
+        cache.invalidateCustomerCache(req.user.companyId);
         res.json(customer);
     } catch (error) {
         console.error(error);
@@ -134,6 +163,7 @@ exports.deleteCustomer = async (req, res) => {
         }
 
         await customer.destroy();
+        cache.invalidateCustomerCache(req.user.companyId);
         res.json({ message: 'Customer deleted' });
     } catch (error) {
         console.error(error);
@@ -186,6 +216,7 @@ exports.addLedgerEntry = async (req, res) => {
         }
         await customer.save();
 
+        cache.invalidateCustomerCache(req.user.companyId);
         res.status(201).json({ customer, entry });
     } catch (error) {
         console.error(error);
@@ -193,16 +224,12 @@ exports.addLedgerEntry = async (req, res) => {
     }
 };
 
-// Get a single customer by ID
+// Get a single customer by ID (No relationship includes for performance)
 exports.getCustomerById = async (req, res) => {
     try {
         const { id } = req.params;
         const customer = await Customer.findOne({
-            where: { id, companyId: req.user.companyId },
-            include: [
-                { model: CustomerLedger, as: 'ledger' },
-                { model: Order, as: 'orders' }
-            ]
+            where: { id, companyId: req.user.companyId }
         });
 
         if (!customer) {
@@ -217,9 +244,88 @@ exports.getCustomerById = async (req, res) => {
             email: customerObj.email || '',
             address: customerObj.address,
             balance: Number(customerObj.current_balance || 0),
-            orders: customerObj.orders ? customerObj.orders.length : 0,
-            ledger: customerObj.ledger || [],
             createdAt: customerObj.createdAt
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// Get all ledger entries for a specific customer
+exports.getCustomerLedger = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        const { count, rows: ledger } = await CustomerLedger.findAndCountAll({
+            where: { customerId: id, companyId: req.user.companyId },
+            order: [['date', 'DESC'], ['createdAt', 'DESC']],
+            limit,
+            offset
+        });
+
+        res.json({
+            ledger,
+            totalCount: count,
+            totalPages: Math.ceil(count / limit),
+            currentPage: page
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// Get all customer ledger entries across the company (with server-side pagination)
+exports.getAllLedgerEntries = async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+        const { search } = req.query;
+
+        const { Op } = require('sequelize');
+        const ledgerWhere = { companyId: req.user.companyId };
+        const customerWhere = { companyId: req.user.companyId };
+
+        if (search) {
+            const terms = search.trim().split(/\s+/).filter(Boolean);
+            if (terms.length > 0) {
+                const isPostgres = Customer.sequelize.options.dialect === 'postgres';
+                const likeOp = isPostgres ? Op.iLike : Op.like;
+
+                customerWhere[Op.and] = terms.map(term => ({
+                    [Op.or]: [
+                        { name: { [likeOp]: `%${term}%` } },
+                        { phone: { [likeOp]: `%${term}%` } }
+                    ]
+                }));
+            }
+        }
+
+        const { count, rows: ledgers } = await CustomerLedger.findAndCountAll({
+            where: ledgerWhere,
+            include: [
+                {
+                    model: Customer,
+                    as: 'customer',
+                    where: customerWhere,
+                    attributes: ['id', 'name', 'phone']
+                }
+            ],
+            order: [['date', 'DESC'], ['createdAt', 'DESC']],
+            limit,
+            offset
+        });
+
+        res.json({
+            ledgers,
+            totalCount: count,
+            totalPages: Math.ceil(count / limit),
+            currentPage: page
         });
     } catch (error) {
         console.error(error);

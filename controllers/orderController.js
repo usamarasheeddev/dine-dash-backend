@@ -1,4 +1,5 @@
 const { Order, OrderItem, Product, Customer, CustomerLedger, InventoryItem, InventoryLedger, Table, Company, RecipeItem, sequelize } = require('../models');
+const cache = require('../utils/cache');
 const { Op } = require('sequelize');
 const { startOfDay, endOfDay } = require('date-fns');
 const { toZonedTime, fromZonedTime } = require('date-fns-tz');
@@ -241,6 +242,253 @@ exports.getReport = async (req, res) => {
         res.status(500).json({ message: 'Server error retrieving reports' });
     }
 };
+
+// ── Shared helpers ────────────────────────────────────────────────────────
+async function buildDateFilter(req) {
+    const { startDate, endDate, status, orderType, search } = req.query;
+    const companyId = req.user.companyId;
+
+    const company = await Company.findByPk(companyId);
+    const tz = company?.timezone || 'UTC';
+    const start = fromZonedTime(startOfDay(toZonedTime(new Date(startDate), tz)), tz);
+    const end   = fromZonedTime(endOfDay(toZonedTime(new Date(endDate), tz)), tz);
+
+    const where = {
+        companyId,
+        createdAt: { [Op.between]: [start, end] }
+    };
+    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') where.userId = req.user.id;
+    if (status   && status   !== 'all') where.status    = status;
+    if (orderType && orderType !== 'all') where.orderType = orderType;
+    if (search) {
+        where[Op.or] = [
+            { id: { [Op.like]: `%${search}%` } },
+            { '$customer.name$': { [Op.like]: `%${search}%` } }
+        ];
+    }
+    return where;
+}
+
+const reportInclude = [
+    { association: 'items', include: ['product'] },
+    { model: Customer, as: 'customer' },
+    { association: 'user', attributes: ['id', 'fullName', 'username'] }
+];
+
+// ── /report/orders ────────────────────────────────────────────────────────
+exports.getReportOrders = async (req, res) => {
+    try {
+        const where = await buildDateFilter(req);
+        const page  = parseInt(req.query.page)  || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        const { count, rows } = await Order.findAndCountAll({
+            where, include: reportInclude,
+            order: [['createdAt', 'DESC']],
+            limit, offset
+        });
+
+        const completedOrders = rows.filter(o => o.status === 'completed');
+        const allCompleted = await Order.findAll({ where: { ...where, status: 'completed' }, include: [] });
+        const totalRevenue   = allCompleted.reduce((s, o) => s + parseFloat(o.finalTotal || o.total || 0), 0);
+        const totalTax       = allCompleted.reduce((s, o) => s + parseFloat(o.tax || 0), 0);
+        const totalDiscount  = allCompleted.reduce((s, o) => s + parseFloat(o.discount || 0), 0);
+        const avgOrderValue  = allCompleted.length ? totalRevenue / allCompleted.length : 0;
+
+        // Total order count (all, not just current page)
+        const totalCount = await Order.count({ where });
+
+        res.json({
+            summary: {
+                totalRevenue, totalOrders: totalCount,
+                completedOrders: allCompleted.length,
+                avgOrderValue, totalTax, totalDiscount
+            },
+            orders: rows,
+            pagination: {
+                totalCount: count, totalPages: Math.ceil(count / limit),
+                currentPage: page, limit
+            }
+        });
+    } catch (err) {
+        console.error('getReportOrders error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// ── /report/products ──────────────────────────────────────────────────────
+exports.getReportProducts = async (req, res) => {
+    try {
+        const where = await buildDateFilter(req);
+        const page  = parseInt(req.query.page)  || 1;
+        const limit = parseInt(req.query.limit) || 10;
+
+        const orders = await Order.findAll({ where: { ...where, status: 'completed' }, include: [{ association: 'items', include: ['product'] }] });
+
+        const productMap = {};
+        orders.forEach(o => {
+            o.items.forEach(i => {
+                const name = i.product ? i.product.name : 'Unknown Product';
+                if (!productMap[name]) productMap[name] = { name, qty: 0, revenue: 0, variations: {}, addons: {} };
+                productMap[name].qty     += parseFloat(i.quantity);
+                productMap[name].revenue += parseFloat(i.total);
+                if (Array.isArray(i.variations)) {
+                    i.variations.forEach(v => {
+                        const vn = v.name || v.label;
+                        if (!productMap[name].variations[vn]) productMap[name].variations[vn] = { name: vn, qty: 0 };
+                        productMap[name].variations[vn].qty += parseFloat(i.quantity);
+                    });
+                }
+                if (Array.isArray(i.addons)) {
+                    i.addons.forEach(a => {
+                        const an = a.name || a.label;
+                        if (!productMap[name].addons[an]) productMap[name].addons[an] = { name: an, qty: 0 };
+                        productMap[name].addons[an].qty += parseFloat(i.quantity);
+                    });
+                }
+            });
+        });
+
+        const all = Object.values(productMap).map(p => ({
+            ...p,
+            variations: Object.values(p.variations),
+            addons:     Object.values(p.addons)
+        })).sort((a, b) => b.revenue - a.revenue);
+
+        const offset = (page - 1) * limit;
+        res.json({
+            productStats: all.slice(offset, offset + limit),
+            pagination: {
+                totalCount: all.length,
+                totalPages: Math.ceil(all.length / limit),
+                currentPage: page, limit
+            }
+        });
+    } catch (err) {
+        console.error('getReportProducts error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// ── /report/categories ────────────────────────────────────────────────────
+exports.getReportCategories = async (req, res) => {
+    try {
+        const where = await buildDateFilter(req);
+        const orders = await Order.findAll({ where: { ...where, status: 'completed' }, include: [] });
+
+        const categoryMap = {};
+        orders.forEach(o => {
+            const type = o.orderType || 'unknown';
+            if (!categoryMap[type]) categoryMap[type] = { name: type, orders: 0, revenue: 0 };
+            categoryMap[type].orders++;
+            categoryMap[type].revenue += parseFloat(o.finalTotal || o.total || 0);
+        });
+        const categoryStats = Object.values(categoryMap).sort((a, b) => b.revenue - a.revenue);
+        res.json({ categoryStats });
+    } catch (err) {
+        console.error('getReportCategories error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// ── /report/customers ─────────────────────────────────────────────────────
+exports.getReportCustomers = async (req, res) => {
+    try {
+        const where = await buildDateFilter(req);
+        const page  = parseInt(req.query.page)  || 1;
+        const limit = parseInt(req.query.limit) || 10;
+
+        const orders = await Order.findAll({ where: { ...where, status: 'completed' }, include: [{ model: Customer, as: 'customer' }] });
+
+        const customerMap = {};
+        orders.forEach(o => {
+            const name = o.customer ? o.customer.name : 'Walk-in';
+            if (!customerMap[name]) customerMap[name] = { name, orders: 0, spent: 0 };
+            customerMap[name].orders++;
+            customerMap[name].spent += parseFloat(o.finalTotal || o.total || 0);
+        });
+        const all = Object.values(customerMap).sort((a, b) => b.spent - a.spent);
+        const offset = (page - 1) * limit;
+        res.json({
+            customerStats: all.slice(offset, offset + limit),
+            pagination: {
+                totalCount: all.length,
+                totalPages: Math.ceil(all.length / limit),
+                currentPage: page, limit
+            }
+        });
+    } catch (err) {
+        console.error('getReportCustomers error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// ── /report/staff ─────────────────────────────────────────────────────────
+exports.getReportStaff = async (req, res) => {
+    try {
+        const where = await buildDateFilter(req);
+        const orders = await Order.findAll({
+            where: { ...where, status: 'completed' },
+            include: [{ association: 'user', attributes: ['id', 'fullName', 'username'] }]
+        });
+
+        const staffMap = {};
+        orders.forEach(o => {
+            const staffId = o.userId || 0;
+            const name    = o.user ? (o.user.fullName || o.user.username) : 'Unknown Staff';
+            if (!staffMap[staffId]) staffMap[staffId] = { id: staffId, name, orders: 0, revenue: 0 };
+            staffMap[staffId].orders++;
+            staffMap[staffId].revenue += parseFloat(o.finalTotal || o.total || 0);
+        });
+        const staffStats = Object.values(staffMap).sort((a, b) => b.revenue - a.revenue);
+        res.json({ staffStats });
+    } catch (err) {
+        console.error('getReportStaff error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// ── /report/ledger ────────────────────────────────────────────────────────
+exports.getReportLedger = async (req, res) => {
+    try {
+        const where = await buildDateFilter(req);
+        const page  = parseInt(req.query.page)  || 1;
+        const limit = parseInt(req.query.limit) || 10;
+
+        const orders = await Order.findAll({
+            where: { ...where, paymentMethod: 'credit' },
+            include: [{ model: Customer, as: 'customer' }],
+            order: [['createdAt', 'DESC']]
+        });
+
+        const allEntries = orders.map(o => ({
+            id:       o.id,
+            customer: o.customer ? o.customer.name : 'Walk-in',
+            amount:   parseFloat(o.finalTotal || o.total || 0),
+            date:     o.createdAt,
+            status:   o.status,
+        }));
+        const totalCredit = allEntries.reduce((s, e) => s + e.amount, 0);
+        const offset = (page - 1) * limit;
+        res.json({
+            ledger: {
+                entries:     allEntries.slice(offset, offset + limit),
+                totalCredit,
+                totalCount:  allEntries.length
+            },
+            pagination: {
+                totalCount: allEntries.length,
+                totalPages: Math.ceil(allEntries.length / limit),
+                currentPage: page, limit
+            }
+        });
+    } catch (err) {
+        console.error('getReportLedger error:', err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
 // Get all orders (paginated)
 exports.getOrders = async (req, res) => {
     try {
@@ -626,6 +874,9 @@ exports.payOrder = async (req, res) => {
         }
 
         await transaction.commit();
+        if (paymentMethod === 'credit') {
+            cache.invalidateCustomerCache(req.user.companyId);
+        }
         res.json(order);
     } catch (error) {
         await transaction.rollback();

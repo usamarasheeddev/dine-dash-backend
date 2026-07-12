@@ -157,8 +157,32 @@ exports.closeRegister = async (req, res) => {
 exports.getSessionHistory = async (req, res) => {
     try {
         const companyId = req.user.companyId;
+        const { startDate, endDate, openedByUserId, status } = req.query;
+        
+        const whereClause = { companyId };
+        
+        if (status && status !== 'all') {
+            whereClause.status = status;
+        }
+        
+        if (openedByUserId && openedByUserId !== 'all') {
+            whereClause.openedByUserId = openedByUserId;
+        }
+        
+        if (startDate || endDate) {
+            whereClause.openedAt = {};
+            if (startDate) {
+                const startStr = startDate.includes('T') ? startDate : `${startDate}T00:00:00.000Z`;
+                whereClause.openedAt[Op.gte] = new Date(startStr);
+            }
+            if (endDate) {
+                const endStr = endDate.includes('T') ? endDate : `${endDate}T23:59:59.999Z`;
+                whereClause.openedAt[Op.lte] = new Date(endStr);
+            }
+        }
+
         const sessions = await RegisterSession.findAll({
-            where: { companyId },
+            where: whereClause,
             include: [
                 { model: User, as: 'openedBy', attributes: ['id', 'fullName', 'username'] },
                 { model: User, as: 'closedBy', attributes: ['id', 'fullName', 'username'] }
