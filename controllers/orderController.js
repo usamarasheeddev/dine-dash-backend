@@ -1114,3 +1114,85 @@ exports.editOrder = async (req, res) => {
     }
 };
 
+// ── Staff-specific orders (stats + paginated list) in one call ──────────────
+exports.getStaffOrders = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const page  = parseInt(req.query.page)  || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+
+        const companyId = req.user.companyId;
+
+        // Date window: default last 30 days, can be overridden via query
+        const now = new Date();
+        const defaultStart = new Date(now);
+        defaultStart.setDate(defaultStart.getDate() - 30);
+
+        const startDate = req.query.startDate ? new Date(req.query.startDate) : defaultStart;
+        const endDate   = req.query.endDate   ? new Date(req.query.endDate)   : now;
+
+        const where = {
+            companyId,
+            userId,
+            createdAt: { [Op.between]: [startDate, endDate] }
+        };
+
+        const include = [
+            { model: Customer, as: 'customer', attributes: ['id', 'name'], required: false },
+        ];
+
+        // Run stats query and paginated list in parallel for speed
+        const [statsRows, { count, rows: orders }] = await Promise.all([
+            Order.findAll({
+                where,
+                attributes: [
+                    [sequelize.fn('COUNT', sequelize.col('Order.id')), 'totalOrders'],
+                    [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.literal(
+                        `CASE WHEN "Order"."status" = 'completed' THEN CAST("Order"."finalTotal" AS DECIMAL) ELSE 0 END`
+                    )), 0), 'totalRevenue'],
+                    [sequelize.fn('COUNT', sequelize.literal(
+                        `CASE WHEN "Order"."status" = 'completed' THEN 1 END`
+                    )), 'completedOrders'],
+                ],
+                raw: true,
+            }),
+            Order.findAndCountAll({
+                where,
+                include,
+                order: [['createdAt', 'DESC']],
+                limit,
+                offset,
+            }),
+        ]);
+
+        const stats = statsRows[0] || {};
+        const totalOrders    = parseInt(stats.totalOrders    || 0);
+        const completedOrders = parseInt(stats.completedOrders || 0);
+        const totalRevenue   = parseFloat(stats.totalRevenue || 0);
+        const avgOrderValue  = completedOrders > 0 ? totalRevenue / completedOrders : 0;
+
+        res.json({
+            stats: {
+                totalOrders,
+                completedOrders,
+                totalRevenue,
+                avgOrderValue,
+            },
+            orders: orders.map(o => ({
+                id: o.id,
+                orderType: o.orderType,
+                status: o.status,
+                total: o.finalTotal || o.total,
+                customer: o.customer ? { name: o.customer.name } : null,
+                createdAt: o.createdAt,
+            })),
+            totalCount: count,
+            totalPages: Math.ceil(count / limit),
+            currentPage: page,
+        });
+    } catch (error) {
+        console.error('getStaffOrders error:', error);
+        res.status(500).json({ message: 'Server error fetching staff orders' });
+    }
+};

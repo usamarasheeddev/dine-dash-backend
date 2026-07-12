@@ -19,4 +19,7 @@ router.put('/:id/status', auth(), orderController.updateOrderStatus);
 router.put('/:id/pay', auth(), orderController.payOrder);
 router.put('/:id/edit', auth(), orderController.editOrder);
 
+// ── Staff-specific optimised endpoint ────────────────────────────────────────
+router.get('/staff/:userId', auth(), orderController.getStaffOrders);
+
 module.exports = router;
