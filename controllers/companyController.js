@@ -69,13 +69,46 @@ exports.createCompany = async (req, res) => {
     }
 };
 
-// Get all companies (Super Admin only)
+// Get all companies (Super Admin only) - with pagination, sorting, and filtering
 exports.getAllCompanies = async (req, res) => {
     try {
-        const companies = await Company.findAll({
-            order: [['createdAt', 'DESC']]
+        const page     = Math.max(1, parseInt(req.query.page)     || 1);
+        const pageSize = Math.min(100, parseInt(req.query.pageSize) || 10);
+        const offset   = (page - 1) * pageSize;
+
+        const { status, plan, search } = req.query;
+
+        const where = {};
+
+        if (status && status !== 'all') {
+            where.status = status;
+        }
+
+        if (plan && plan !== 'all') {
+            where.subscriptionPlan = plan;
+        }
+
+        if (search && search.trim()) {
+            where[Op.or] = [
+                { name:  { [Op.iLike]: `%${search.trim()}%` } },
+                { email: { [Op.iLike]: `%${search.trim()}%` } }
+            ];
+        }
+
+        const { count, rows } = await Company.findAndCountAll({
+            where,
+            order: [['createdAt', 'DESC']],
+            limit: pageSize,
+            offset
         });
-        res.json(companies);
+
+        res.json({
+            data:       rows,
+            total:      count,
+            page,
+            pageSize,
+            pageCount:  Math.ceil(count / pageSize)
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Server error', error: error.message });

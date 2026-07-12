@@ -62,7 +62,7 @@ module.exports = {
             <div class="info-item"><span class="info-label">Address:</span> ${data.address}</div>
         </div>
         <p>Please log in to the Super Admin panel to review and approve/reject this request.</p>
-        <a href="https://dine-dash-pos.vercel.app/superadmin/login" class="button">Go to Admin Panel</a>
+        <a href="${process.env.FRONTEND_URL}/superadmin/login" class="button">Go to Admin Panel</a>
     `),
 
     // For the Sender on Approval
@@ -72,7 +72,7 @@ module.exports = {
         <p>Great news! Your request has been <strong>Approved</strong>. Your company profile and initial administrative account are now ready.</p>
         <p>You can now log in to your dashboard to set up your branches, staff, and products.</p>
         <div style="text-align: center;">
-            <a href="https://dine-dash-pos.vercel.app/login" class="button">Log In to Dashboard</a>
+            <a href="${process.env.FRONTEND_URL}/login" class="button">Log In to Dashboard</a>
         </div>
         <div class="info-box" style="border-left: 4px solid ${BRAND_COLOR};">
             <p style="margin:0; font-size: 14px;"><strong>Tip:</strong> Start by adding your first branch and categories in the Catalog section.</p>

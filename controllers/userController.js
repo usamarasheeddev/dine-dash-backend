@@ -149,3 +149,50 @@ exports.deleteStaff = async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 };
+
+// Super Admin: update own email / password
+exports.updateSuperAdminProfile = async (req, res) => {
+    try {
+        if (req.user.role !== 'superadmin') {
+            return res.status(403).json({ message: 'Forbidden' });
+        }
+
+        const { email, currentPassword, newPassword } = req.body;
+
+        const user = await User.findByPk(req.user.id);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        // Verify current password before allowing any sensitive change
+        if (email || newPassword) {
+            if (!currentPassword) {
+                return res.status(400).json({ message: 'Current password is required to update email or password.' });
+            }
+            const valid = await bcrypt.compare(currentPassword, user.password);
+            if (!valid) {
+                return res.status(400).json({ message: 'Current password is incorrect.' });
+            }
+        }
+
+        if (email && email !== user.email) {
+            const existing = await User.findOne({ where: { email } });
+            if (existing) return res.status(400).json({ message: 'Email already in use.' });
+            user.email = email;
+        }
+
+        if (newPassword && newPassword.trim() !== '') {
+            if (newPassword.length < 6) {
+                return res.status(400).json({ message: 'New password must be at least 6 characters.' });
+            }
+            user.password = newPassword; // pre-save hook hashes it
+        }
+
+        await user.save();
+
+        const data = user.toJSON();
+        delete data.password;
+        res.json({ message: 'Profile updated successfully.', user: data });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
