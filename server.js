@@ -13,11 +13,11 @@ app.use(cors({
     origin: [
         'https://dine-dash-pos.vercel.app',
         'https://dine-dash-pos.vercel.app/',
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://localhost:5175',
         'http://localhost:3000',
-        'http://localhost:8080'
+        'http://localhost:8080',
+        'https://dine-dash-pos-five.vercel.app',
+        'https://pos-dine-dash.vercel.app',
+
     ],
     credentials: true
 }));
