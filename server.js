@@ -21,7 +21,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Health Check Route
+// Health Check & Keep Alive Routes
 app.get('/', (req, res) => {
     res.status(200).json({
         status: 'online',
@@ -29,6 +29,9 @@ app.get('/', (req, res) => {
         timestamp: new Date().toISOString()
     });
 });
+
+app.use('/api/keep-alive', require('./routes/keepAliveRoutes'));
+app.use('/api/health', require('./routes/keepAliveRoutes'));
 
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));
